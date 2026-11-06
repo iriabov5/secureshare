@@ -1,0 +1,7 @@
+flowchart LR
+    A["GET файла по UUID"] --> B["FileService: PreAuthorize"]
+    B --> C["FileCatalog: загрузка READY metadata"]
+    C --> D["PostAuthorize: ownerId == principal.accountId"]
+    D -->|владелец| E["S3 GET; bounded read; size/SHA-256"]
+    D -->|отказ| F["403; S3 не читается"]
+    E --> G["attachment; octet-stream; no-store"]

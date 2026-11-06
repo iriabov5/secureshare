@@ -1,0 +1,25 @@
+{
+  "name": "secureshare",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace frontend",
+    "build:frontend": "npm run build --workspace frontend",
+    "check:frontend": "npm run check --workspace frontend",
+    "test:e2e": "npm run test:e2e --workspace frontend"
+  },
+  "engines": {
+    "node": "^26.13.0",
+    "npm": "^12.2.2"
+  },
+  "packageManager": "npm@12.2.2",
+  "overrides": {
+    "minimatch": "11.0.1"
+  },
+  "allowScripts": {
+    "fsevents": false
+  },
+  "license": "MIT"
+}

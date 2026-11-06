@@ -1,0 +1,397 @@
+openapi: 3.0.3
+info:
+  title: SecureShare API
+  version: 0.1.0
+  description: Сессионная аутентификация и приватные файлы. CSRF включён для всех POST; токен выдаёт /api/v1/auth/csrf.
+paths:
+  /api/v1/auth/csrf:
+    get:
+      operationId: csrfToken
+      summary: Masked CSRF token текущей сессии
+      security: []
+      responses:
+        '500': {$ref: '#/components/responses/InternalError'}
+        '200':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Создаёт анонимную сессию при необходимости; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [token, headerName]
+                properties:
+                  token: {type: string}
+                  headerName: {type: string, enum: [X-CSRF-TOKEN]}
+  /api/v1/auth/register:
+    post:
+      operationId: registerAccount
+      summary: Создать USER без автоматического входа
+      security: []
+      parameters:
+        - {$ref: '#/components/parameters/CsrfHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Credentials'}
+      responses:
+        '500': {$ref: '#/components/responses/InternalError'}
+        '201':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Аккаунт создан
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                additionalProperties: false
+                properties:
+                  message: {type: string}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: USERNAME_TAKEN — нормализованный логин занят
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: Войти через стандартный formLogin filter
+      description: Меняет session ID и отзывает прежний CSRF token. После успеха получить новый token. Неудачный повторный вход отзывает прежнюю аутентификацию.
+      security: []
+      parameters:
+        - {$ref: '#/components/parameters/CsrfHeader'}
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: {$ref: '#/components/schemas/Credentials'}
+      responses:
+        '500': {$ref: '#/components/responses/InternalError'}
+        '200':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Identity новой аутентифицированной сессии
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CurrentIdentity'}
+        '401':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: INVALID_CREDENTIALS — одинаковый ответ для неизвестного логина и неверного пароля
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Инвалидировать сессию и удалить cookie
+      security: [{sessionCookie: []}]
+      parameters:
+        - {$ref: '#/components/parameters/CsrfHeader'}
+      responses:
+        '500': {$ref: '#/components/responses/InternalError'}
+        '204':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Сессия отозвана; повторить GET csrf для следующего входа
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/me:
+    get:
+      operationId: currentIdentity
+      summary: Текущий пользователь
+      security:
+        - sessionCookie: []
+      responses:
+        '500': {$ref: '#/components/responses/InternalError'}
+        '200':
+          description: Identity серверной сессии
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+            Cache-Control:
+              schema:
+                type: string
+              description: Содержит no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentIdentity'
+        '401':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Аутентифицированная сессия отсутствует или истекла
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Unauthenticated'
+  /api/v1/files:
+    get:
+      operationId: listOwnFiles
+      summary: Собственные готовые файлы
+      security: [{sessionCookie: []}]
+      responses:
+        '500': {$ref: '#/components/responses/InternalError'}
+        '200':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Только READY файлы текущего пользователя, createdAt DESC и id DESC
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/FileInfo'}
+        '401':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Требуется вход
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Unauthenticated'}
+        '503':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Метаданные временно недоступны
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+    post:
+      operationId: uploadOwnFile
+      summary: Загрузить собственный файл
+      security: [{sessionCookie: []}]
+      parameters:
+        - in: header
+          name: X-CSRF-TOKEN
+          required: true
+          schema: {type: string}
+          description: Masked CSRF token текущей сессии из /api/v1/auth/csrf
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: От 1 байта до 10 MiB; имя до 255 UTF-8 байт без путей и управляющих символов
+      responses:
+        '500': {$ref: '#/components/responses/InternalError'}
+        '201':
+          description: Содержимое сохранено в S3, metadata подтверждены в PostgreSQL
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+            Location:
+              schema: {type: string}
+              description: /api/v1/files/{id}/content
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileInfo'}
+        '400':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Файл отсутствует либо недопустим
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '401':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Требуется вход при валидном CSRF
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Unauthenticated'}
+        '403':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: CSRF отсутствует либо неверен
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '413':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Файл или запрос превышает допустимый размер
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '503':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Ошибка S3 либо PostgreSQL; повторная загрузка создаёт новый файл
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+  /api/v1/files/{id}/content:
+    get:
+      operationId: downloadOwnFile
+      summary: Скачать собственный готовый файл
+      security: [{sessionCookie: []}]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '500': {$ref: '#/components/responses/InternalError'}
+        '200':
+          description: Содержимое файла; Content-Disposition attachment, Cache-Control no-store
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+            Content-Disposition:
+              schema: {type: string}
+            Cache-Control:
+              schema: {type: string}
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '400':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Недопустимый UUID
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '401':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Требуется вход
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Unauthenticated'}
+        '403':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Файл чужой, отсутствует либо не завершён; S3 не читается
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '503':
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          description: Ошибка БД/S3, отсутствующий объект либо неверный размер/hash
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+components:
+  headers:
+    RequestId:
+      description: Серверный UUID для поиска связанных событий; клиентский X-Request-ID игнорируется
+      schema: {type: string, format: uuid}
+  parameters:
+    CsrfHeader:
+      in: header
+      name: X-CSRF-TOKEN
+      required: true
+      schema: {type: string}
+  responses:
+    InternalError:
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      description: Непредвиденная ошибка; INTERNAL_ERROR без внутренних деталей
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    ValidationError:
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      description: VALIDATION_ERROR — недопустимые credentials или JSON
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Forbidden:
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      description: FORBIDDEN — отсутствует или неверен CSRF token
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Unavailable:
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      description: SERVICE_UNAVAILABLE — зависимость временно недоступна
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: JSESSIONID
+  schemas:
+    Credentials:
+      type: object
+      required: [username, password]
+      properties:
+        username: {type: string, pattern: '^[a-zA-Z0-9_]{3,64}$'}
+        password:
+          type: string
+          format: password
+          description: 12–64 Unicode code points, максимум 72 UTF-8 байта; без trim и нормализации
+    ApiError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: {type: string}
+        message: {type: string}
+    CurrentIdentity:
+      type: object
+      additionalProperties: false
+      required: [id, username, roles]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          pattern: '^[a-z0-9_]{3,64}$'
+        roles:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: string
+            enum: [USER]
+    Unauthenticated:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [UNAUTHENTICATED]
+        message:
+          type: string
+          enum: [Требуется вход]
+    FileInfo:
+      type: object
+      additionalProperties: false
+      required: [id, name, sizeBytes, sha256, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        name:
+          type: string
+          description: Исходное имя, максимум 255 UTF-8 байт; без slash/backslash/управляющих символов
+        sizeBytes: {type: integer, format: int64, minimum: 1, maximum: 10485760}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        createdAt: {type: string, format: date-time}
+    FileError:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [INVALID_FILE, FILE_TOO_LARGE, FORBIDDEN, FILE_SERVICE_UNAVAILABLE]
+        message: {type: string}

@@ -1,0 +1,21 @@
+sequenceDiagram
+    participant B as Браузер
+    participant C as SecurityFilterChain
+    participant F as UsernamePasswordAuthenticationFilter
+    participant P as DaoAuthenticationProvider
+    participant U as AccountDetailsService
+    participant DB as PostgreSQL
+    B->>C: GET /login и GET /api/v1/auth/csrf
+    C-->>B: React shell, JSON token, анонимная cookie
+    B->>C: POST /api/v1/auth/login: form credentials, CSRF header
+    C->>C: CsrfFilter проверяет токен
+    C->>F: Допустимая форма
+    F->>P: AuthenticationManager.authenticate
+    P->>U: loadUserByUsername
+    U->>DB: Поиск normalized username
+    DB-->>U: UUID, username, password hash
+    U-->>P: AccountPrincipal
+    P->>P: PasswordEncoder.matches
+    P-->>F: Authentication с ROLE_USER
+    F->>F: Смена session ID, сохранение SecurityContext
+    F-->>B: Новая cookie, 200 identity JSON

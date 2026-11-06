@@ -1,0 +1,24 @@
+spring:
+  datasource:
+    url: ${JDBC_URL:jdbc:postgresql://localhost:55432/secureshare}
+    username: ${DB_USER:secureshare}
+    password: ${DB_PASSWORD:secureshare-local-password}
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false
+storage:
+  s3:
+    endpoint: ${S3_ENDPOINT:http://localhost:8333}
+    region: ${S3_REGION:us-east-1}
+    bucket: ${S3_BUCKET:secureshare}
+    path-style: ${S3_PATH_STYLE:true}
+    access-key: ${AWS_ACCESS_KEY_ID:secureshare-local}
+    secret-key: ${AWS_SECRET_ACCESS_KEY:secureshare-local-secret}
+logging:
+  structured:
+    format:
+      console: ""
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] requestId=%X{requestId:-none} %logger{28} %kvp %msg%n"
