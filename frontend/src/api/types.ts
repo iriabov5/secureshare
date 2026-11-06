@@ -18,3 +18,14 @@ export interface CsrfToken {
   token: string;
   headerName: string;
 }
+
+export interface ActiveSession {
+  id: string;
+  current: boolean;
+  createdAt: string;
+  lastSeenAt: string;
+}
+export interface ActiveSessionList {
+  sessions: ActiveSession[];
+  maxSessions: number;
+}

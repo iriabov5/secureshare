@@ -17,11 +17,16 @@ import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher
+import dev.secureshare.sessions.ActiveSessions
+import dev.secureshare.sessions.SessionAuthentication
+import org.springframework.security.web.session.ConcurrentSessionFilter
+import org.springframework.security.web.session.HttpSessionEventPublisher
 import java.time.Clock
 
 @Configuration
 @EnableMethodSecurity
 class SecurityConfiguration {
+    @Bean fun sessionEvents() = HttpSessionEventPublisher()
     @Bean fun clock(): Clock = Clock.systemUTC()
     @Bean fun passwordEncoder(): PasswordEncoder = BoundedPasswordEncoder(
         DelegatingPasswordEncoder("bcrypt", mapOf("bcrypt" to BCryptPasswordEncoder(12))),
@@ -30,14 +35,15 @@ class SecurityConfiguration {
         DaoAuthenticationProvider(details).also { it.setPasswordEncoder(encoder) }
 
     @Bean
-    fun securityFilterChain(http: HttpSecurity, responses: SecurityResponses, provider: DaoAuthenticationProvider): SecurityFilterChain {
+    fun securityFilterChain(http: HttpSecurity, responses: SecurityResponses, provider: DaoAuthenticationProvider, sessions: ActiveSessions): SecurityFilterChain {
         http.authenticationProvider(provider)
             .authorizeHttpRequests {
                 it.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
-                    .requestMatchers(HttpMethod.GET, "/", "/login", "/register", "/app", "/files", "/index.html", "/assets/**", "/favicon.svg", "/api/v1/auth/csrf").permitAll()
+                    .requestMatchers(HttpMethod.GET, "/", "/login", "/register", "/app", "/files", "/security", "/index.html", "/assets/**", "/favicon.svg", "/api/v1/auth/csrf").permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/logout").permitAll()
-                    .requestMatchers(HttpMethod.GET, "/api/v1/me", "/api/v1/files", "/api/v1/files/*/content").authenticated()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/me", "/api/v1/me/sessions", "/api/v1/files", "/api/v1/files/*/content").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/v1/files").authenticated()
+                    .requestMatchers(HttpMethod.DELETE, "/api/v1/me/sessions/*").authenticated()
                     .anyRequest().denyAll()
             }
             .formLogin {
@@ -54,7 +60,11 @@ class SecurityConfiguration {
                     }
                     .invalidateHttpSession(true).clearAuthentication(true).deleteCookies("JSESSIONID")
             }
-            .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED).sessionFixation { fixation -> fixation.changeSessionId() } }
+            .sessionManagement {
+                it.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
+                    .sessionAuthenticationStrategy(SessionAuthentication(sessions))
+            }
+            .addFilterAt(ConcurrentSessionFilter(sessions) { event -> responses.sessionExpired(event.response) }, ConcurrentSessionFilter::class.java)
             .requestCache { it.disable() }
             .exceptionHandling { it.authenticationEntryPoint(responses).accessDeniedHandler(responses) }
             .headers {

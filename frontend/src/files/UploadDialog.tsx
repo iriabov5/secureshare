@@ -42,7 +42,7 @@ export function UploadDialog({
       onUploaded(saved);
       onClose();
     } catch (error_) {
-      if (error_ instanceof HttpError && error_.status === 401) expire();
+      if (error_ instanceof HttpError && error_.status === 401) expire(error_.code);
       else setError(errorMessage(error_) + ' Перед повторной загрузкой проверьте список файлов.');
     } finally {
       setBusy(false);

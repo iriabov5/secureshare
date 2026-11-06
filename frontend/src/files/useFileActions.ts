@@ -8,7 +8,7 @@ export function useFileActions(setError: (message: string | null) => void) {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
   function rejected(error_: unknown) {
-    if (error_ instanceof HttpError && error_.status === 401) expire();
+    if (error_ instanceof HttpError && error_.status === 401) expire(error_.code);
     else setError(errorMessage(error_));
   }
   async function download(file: FileInfo) {

@@ -85,6 +85,7 @@ class RequestLoggingFilter : OncePerRequestFilter() {
         return when {
             path in ROUTES -> path
             path.startsWith("/assets/") -> ASSETS_PATTERN
+            path.matches(Regex("/api/v1/me/sessions/[0-9a-fA-F-]{36}")) -> "/api/v1/me/sessions/{id}"
             path.matches(Regex("/api/v1/files/[0-9a-fA-F-]{36}/content")) -> "/api/v1/files/{id}/content"
             else -> "UNMATCHED"
         }
@@ -99,8 +100,8 @@ class RequestLoggingFilter : OncePerRequestFilter() {
         private const val ASSETS_PATTERN = "/assets/**"
         private val QUIET_ROUTES = setOf(ASSETS_PATTERN, "/favicon.svg", "/api/v1/auth/csrf")
         private val METHODS = setOf("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE")
-        private val ROUTES = setOf("/", "/login", "/register", "/files", "/app", "/index.html", "/favicon.svg", ASSETS_PATTERN,
-            "/api/v1/auth/csrf", "/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/auth/register", "/api/v1/me", "/api/v1/files", "/api/v1/files/{id}/content")
+        private val ROUTES = setOf("/", "/login", "/register", "/files", "/security", "/app", "/index.html", "/favicon.svg", ASSETS_PATTERN,
+            "/api/v1/auth/csrf", "/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/auth/register", "/api/v1/me", "/api/v1/me/sessions", "/api/v1/me/sessions/{id}", "/api/v1/files", "/api/v1/files/{id}/content")
     }
 }
 

@@ -1279,3 +1279,135 @@ strong {
     scroll-behavior: auto !important;
   }
 }
+
+.sidebar nav {
+  display: grid;
+  gap: 8px;
+}
+.nav-item:not([aria-current='page']) {
+  background: transparent;
+  border-color: transparent;
+}
+.session-summary {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid #e0e6f0;
+  border-radius: 14px;
+  background: white;
+}
+.session-summary h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+.session-summary p,
+.session-details p {
+  margin: 4px 0;
+  color: #627089;
+  font-size: 14px;
+}
+.session-explanation {
+  max-width: 740px;
+  margin: 20px 0 28px;
+  color: #627089;
+  line-height: 1.7;
+}
+.session-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.session-row {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 26px;
+}
+.session-row + .session-row {
+  border-top: 1px solid #e0e6f0;
+}
+.session-icon {
+  color: #4b59c9;
+  padding: 12px;
+  border-radius: 12px;
+  background: #eef0ff;
+}
+.session-details {
+  flex: 1;
+  min-width: 0;
+}
+.session-details h3 {
+  margin: 0 0 10px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 16px;
+}
+.session-badge {
+  padding: 4px 9px;
+  background: #e8f6ef;
+  color: #14664c;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.session-loading {
+  display: block;
+  padding: 20px;
+  color: #627089;
+}
+.session-dialog {
+  padding: 30px;
+}
+.session-dialog p {
+  color: #627089;
+  line-height: 1.7;
+}
+.session-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 26px;
+  flex-wrap: wrap;
+}
+.session-emblem {
+  color: #4b59c9;
+}
+@media (max-width: 760px) {
+  .sidebar nav {
+    display: flex;
+    order: 3;
+    width: 100%;
+  }
+  .sidebar .nav-item {
+    font-size: 12px;
+    padding: 10px;
+  }
+  .sidebar .nav-item > span {
+    display: none;
+  }
+  .sidebar {
+    flex-wrap: wrap;
+  }
+  .session-row {
+    flex-wrap: wrap;
+    padding: 20px;
+    gap: 12px;
+  }
+  .session-row > .button {
+    margin-left: 0;
+    width: 100%;
+  }
+  .session-icon {
+    display: none;
+  }
+  .security-main .page-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .session-details h3 {
+    gap: 8px;
+  }
+}

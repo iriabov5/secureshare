@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage, HttpError } from '../api/client';
 import type { FileInfo } from '../api/types';
 
-export function useFiles(expire: () => void) {
+export function useFiles(expire: (reason?: string) => void) {
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export function useFiles(expire: () => void) {
           },
           (error_: unknown) => {
             if (signal?.aborted) return;
-            if (error_ instanceof HttpError && error_.status === 401) expire();
+            if (error_ instanceof HttpError && error_.status === 401) expire(error_.code);
             else setError(errorMessage(error_));
           },
         )

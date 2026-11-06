@@ -8,7 +8,7 @@ async function noOverflow(page: Page) {
 }
 
 test('Регистрация, вход, приватные файлы, скачивание и выход', async ({ page, browser }, testInfo) => {
-  const username = `u${crypto.randomUUID().replaceAll('-', '')}`;
+  const username = `demo_${testInfo.project.name}`;
   const password = 'Browser correct passphrase';
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -116,4 +116,68 @@ test('Регистрация, вход, приватные файлы, скач�
   expect((await page.request.get('/api/v1/files')).status()).toBe(401);
   expect(await page.evaluate(() => Object.keys(localStorage))).toEqual([]);
   expect(errors).toEqual([]);
+});
+
+test('Управление сеансами и отзыв доступа в другом браузере', async ({ page, browser }, testInfo) => {
+  const base = process.env.E2E_BASE_URL!;
+  const username = `security_${testInfo.project.name}`;
+  const password = 'Session browser passphrase';
+  const csrfResponse = await page.request.get('/api/v1/auth/csrf');
+  const token = (await csrfResponse.json()) as { token: string; headerName: string };
+  const credentials = { username, password };
+  expect(
+    (
+      await page.request.post('/api/v1/auth/register', {
+        data: credentials,
+        headers: { [token.headerName]: token.token },
+      })
+    ).status(),
+  ).toBe(201);
+  expect(
+    (
+      await page.request.post('/api/v1/auth/login', {
+        form: credentials,
+        headers: { [token.headerName]: token.token },
+      })
+    ).status(),
+  ).toBe(200);
+  const other = await browser.newContext({ baseURL: base });
+  try {
+    const otherPage = await other.newPage();
+    await otherPage.goto('/login');
+    await otherPage.getByLabel('Логин', { exact: true }).fill(username);
+    await otherPage.getByLabel('Пароль', { exact: true }).fill(password);
+    await otherPage.getByRole('button', { name: 'Войти', exact: true }).click();
+    await expect(otherPage.getByRole('heading', { name: 'Мои файлы.' })).toBeVisible();
+    await otherPage.getByRole('link', { name: 'Безопасность', exact: true }).click();
+    await expect(otherPage.getByText('2 из 3 доступных')).toBeVisible();
+    await page.goto('/security');
+    await expect(page.getByText('2 из 3 доступных')).toBeVisible();
+    await noOverflow(page);
+    await page.screenshot({
+      path: resolve('../docs/screenshots', `${testInfo.project.name}-security.png`),
+      fullPage: true,
+    });
+    await page.getByRole('button', { name: 'Завершить', exact: true }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => !!document.activeElement?.closest('dialog'))).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    await page.getByRole('button', { name: 'Завершить', exact: true }).click();
+    await page.getByRole('button', { name: 'Завершить сеанс', exact: true }).click();
+    await expect(page.getByText('1 из 3 доступных')).toBeVisible();
+    await otherPage.getByRole('button', { name: 'Обновить', exact: true }).click();
+    await expect(otherPage.getByRole('heading', { name: 'С возвращением' })).toBeVisible();
+    await expect(otherPage.getByText('Сеанс завершён. Войдите снова.')).toBeVisible();
+    expect((await other.request.get('/api/v1/files')).status()).toBe(401);
+    expect((await page.request.get('/api/v1/me')).status()).toBe(200);
+    await otherPage.getByLabel('Логин', { exact: true }).fill(username);
+    await otherPage.getByLabel('Пароль', { exact: true }).fill(password);
+    await otherPage.getByRole('button', { name: 'Войти', exact: true }).click();
+    await expect(otherPage.getByRole('heading', { name: 'Мои файлы.' })).toBeVisible();
+    await expect(otherPage.getByText('Сеанс завершён. Войдите снова.')).not.toBeVisible();
+  } finally {
+    await other.close();
+  }
 });

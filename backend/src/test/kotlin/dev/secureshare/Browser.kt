@@ -36,6 +36,12 @@ class Browser(private val origin: String, ssl: SSLContext? = null) {
             .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
     }
 
+    fun delete(path: String, csrf: String? = null): HttpResponse<String> = client.send(
+        HttpRequest.newBuilder(URI.create(origin + path)).timeout(Duration.ofSeconds(15))
+            .apply { if (csrf != null) header("X-CSRF-TOKEN", csrf) }.DELETE().build(),
+        HttpResponse.BodyHandlers.ofString(),
+    )
+
     fun csrf(): String = tools.jackson.module.kotlin.jacksonObjectMapper().readTree(get("/api/v1/auth/csrf").body())["token"].asString()
 
     fun sessionId(): String = cookies.cookieStore.cookies.first { it.name == "JSESSIONID" }.value.removeSurrounding("\"")

@@ -5,11 +5,13 @@
 ## Структура и ответственность
 
 - api/client.ts — fetch, cookies, CSRF cache, безопасные ошибки; изменяющие запросы автоматически не повторяются.
-- auth/AuthContext.tsx — состояние сессии. 401 означает анонимного пользователя; сбой сети даёт retry без ложного выхода.
+- auth/AuthContext.tsx — состояние сессии. 401 очищает клиентскую сессию; SESSION_EXPIRED показывает причину завершения на login, CSRF cache сбрасывается; сбой сети даёт retry без ложного выхода.
 - auth/AuthPage.tsx — вход и регистрация с общими полями. Пароль не переносится в history после регистрации.
 - files/useFiles.ts — загрузка metadata, отмена устаревшего запроса и обновление списка.
 - files/FilesPage.tsx — рабочее пространство, поиск/сортировка и скачивание.
 - files/UploadDialog.tsx — выбор файла, dropzone, валидация, состояние отправки и подтверждение API.
+- security/ — список активных сеансов, подтверждение отзыва и обработка ошибок.
+- ui/WorkspaceLayout.tsx — общие навигация, аккаунт и заголовок разделов.
 - ui/ — общие кнопка, поле, бренд и сообщения. Иконки Lucide поставляются в bundle; внешних шрифтов/CDN нет.
 
 Компоненты не принимают решения о серверных полномочиях. Доступ проверяют Spring Security и Method Security. Регистрация JSON, login — form-urlencoded через UsernamePasswordAuthenticationFilter, logout — LogoutFilter. CSRF включён, после смены Authentication токен запрашивается заново. Cookie HttpOnly, SameSite=Lax; Secure выключен только в local-профиле.

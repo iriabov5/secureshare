@@ -31,6 +31,10 @@ class DatabaseOutageTest {
         val password = "Correct outage passphrase"
         assertEquals(201, b.post(REGISTER, mapOf("username" to user, "password" to password, "_csrf" to b.csrf())).statusCode())
         assertEquals(200, b.post(LOGIN, mapOf("username" to user, "password" to password, "_csrf" to b.csrf())).statusCode())
+        val second = Browser(origin)
+        assertEquals(200, second.post(LOGIN, mapOf("username" to user, "password" to password, "_csrf" to second.csrf())).statusCode())
+        val secondId = tools.jackson.module.kotlin.jacksonObjectMapper().readTree(second.get("/api/v1/me/sessions").body())["sessions"].first { it["current"].asBoolean() }["id"].asString()
+        val revokeToken = b.csrf()
         val registration = Browser(origin); val csrf = registration.csrf()
         val absent = user + "x"
         // Замораживаем отдельный контейнер: TCP недоступен, mapped port и данные сохраняются.
@@ -38,6 +42,9 @@ class DatabaseOutageTest {
         docker.pauseContainerCmd(postgres.containerId).exec()
         try {
             assertEquals(200, b.get(ME).statusCode())
+            assertEquals(200, b.get("/api/v1/me/sessions").statusCode())
+            assertEquals(204, b.delete("/api/v1/me/sessions/$secondId", revokeToken).statusCode())
+            assertEquals(401, second.get(ME).statusCode())
             val failedRegistration = registration.post(REGISTER, mapOf("username" to absent, "password" to password, "_csrf" to csrf))
             assertEquals(503, failedRegistration.statusCode())
             assertFalse(failedRegistration.body().contains(password))

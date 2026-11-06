@@ -65,3 +65,19 @@ describe('Сессионный API client', () => {
     await expect(api.logout()).resolves.toBeUndefined();
   });
 });
+
+it('получает список сеансов с cookies и отправляет отзыв с CSRF без тела', async () => {
+  const data = { sessions: [], maxSessions: 3 };
+  fetcher
+    .mockResolvedValueOnce(json(data))
+    .mockResolvedValueOnce(json(token))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  expect(await api.sessions()).toEqual(data);
+  await expect(api.revokeSession('session/id')).resolves.toBeUndefined();
+  const [path, init] = fetcher.mock.calls[2];
+  expect(path).toBe('/api/v1/me/sessions/session%2Fid');
+  expect(init?.method).toBe('DELETE');
+  expect(init?.credentials).toBe('include');
+  expect(new Headers(init?.headers).get(token.headerName)).toBe(token.token);
+  expect(init?.body).toBeUndefined();
+});

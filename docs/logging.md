@@ -22,8 +22,10 @@ rg 'нужный-request-id' backend.log
 | http.request.completed | INFO 2xx/3xx; WARN ожидаемые 4xx; ERROR 5xx. method, безопасный route, status, durationMs, outcome |
 | account.registration.succeeded / rejected | INFO после commit / WARN validation или conflict без введённого login |
 | auth.login.succeeded / rejected | INFO подтверждённый вход / WARN общий INVALID_CREDENTIALS |
+| auth.session.revoked | INFO после отзыва другого сеанса: accountId, публичный targetSessionId |
+| auth.session.expired | INFO после вытеснения: accountId, публичный targetSessionId, reason=CONCURRENCY_LIMIT |
 | auth.logout.succeeded | INFO штатный logout; не означает истечение сессии |
-| security.request.rejected | WARN: UNAUTHENTICATED, FORBIDDEN, MISSING_OR_INVALID_CSRF |
+| security.request.rejected | WARN: UNAUTHENTICATED, SESSION_EXPIRED, FORBIDDEN, MISSING_OR_INVALID_CSRF |
 | file.upload.started | INFO: создана UPLOADING metadata; файл ещё не сохранён |
 | file.upload.succeeded | INFO только после подтверждённых PUT и READY commit |
 | file.list.succeeded | INFO: resultCount готовых собственных файлов |
@@ -58,6 +60,8 @@ ERROR requestId=<uuid> event="http.request.completed" outcome="ERROR" method="PO
 
 ## Какие данные исключены
 
-Пароли/hash, cookie/session/CSRF/Authorization, bodies, raw username, filenames/bytes/hash файлов, query/raw path values, IP/user-agent, credentials/JDBC/S3 URLs, SQL/bind values и непроверенные exception messages. В приложение попадают только безопасные enums, шаблон маршрута, серверные UUID и числовые значения. Raw SDK/SQL Throwable не передаётся logger: сохраняются классы причин и stack frames без messages. Шумные Hibernate SQL/error и Flyway INFO loggers отключены; источником диагностики становятся нормализованные события приложения.
+Пароли/hash, cookie/JSESSIONID/CSRF/Authorization, bodies, raw username, filenames/bytes/hash файлов, query/raw path values, IP/user-agent, credentials/JDBC/S3 URLs, SQL/bind values и непроверенные exception messages. В приложение попадают только безопасные enums, шаблон маршрута, серверные UUID и числовые значения. Raw SDK/SQL Throwable не передаётся logger: сохраняются классы причин и stack frames без messages. Шумные Hibernate SQL/error и Flyway INFO loggers отключены; источником диагностики становятся нормализованные события приложения.
+
+Публичный targetSessionId служит только идентификатором управления; значение cookie в нём не используется.
 
 Логи помогают расследовать операции, но не являются неизменяемым аудитом или подтверждением доставки файла на диск пользователя. Retention, централизованный сбор и distributed tracing не добавлены.

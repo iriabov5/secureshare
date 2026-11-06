@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, Link } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext';
 import { AuthPage } from './auth/AuthPage';
+import { SecurityPage } from './security/SecurityPage';
 import { FilesPage } from './files/FilesPage';
 import { LoadingScreen, Message } from './ui/Feedback';
 import { Button } from './ui/Button';
@@ -26,6 +27,7 @@ export function App() {
         element={user ? <Navigate to="/files" replace /> : <AuthPage key="register" mode="register" />}
       />
       <Route path="/files" element={user ? <FilesPage /> : <Navigate to="/login" replace />} />
+      <Route path="/security" element={user ? <SecurityPage /> : <Navigate to="/login" replace />} />
       <Route path="/" element={<Navigate to="/files" replace />} />
       <Route path="/app" element={<Navigate to="/files" replace />} />
       <Route

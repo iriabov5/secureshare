@@ -11,7 +11,7 @@ import { Message } from '../ui/Feedback';
 
 export function AuthPage({ mode }: Readonly<{ mode: 'login' | 'register' }>) {
   const registration = mode === 'register';
-  const { login } = useAuth();
+  const { login, expired } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const initial = location.state as { registered?: boolean; username?: string } | null;
@@ -99,6 +99,7 @@ export function AuthPage({ mode }: Readonly<{ mode: 'login' | 'register' }>) {
           {initial?.registered && !registration && (
             <Message tone="success">Аккаунт создан. Теперь можно войти.</Message>
           )}
+          {expired && !registration && <Message>Сеанс завершён. Войдите снова.</Message>}
           {error && <Message>{error}</Message>}
           <form
             onSubmit={(event) => {

@@ -19,13 +19,13 @@ import org.springframework.stereotype.Component
 @Component
 class SecurityResponses(private val mapper: ObjectMapper) : AuthenticationEntryPoint, AccessDeniedHandler, AuthenticationFailureHandler {
     override fun commence(request: HttpServletRequest, response: HttpServletResponse, exception: AuthenticationException) {
-        AppLog.event("security.request.rejected", Outcome.REJECTED, Level.WARN, mapOf("reasonCode" to "UNAUTHENTICATED"))
+        AppLog.event(REQUEST_REJECTED, Outcome.REJECTED, Level.WARN, mapOf("reasonCode" to "UNAUTHENTICATED"))
         write(response, 401, ApiError("UNAUTHENTICATED", "Требуется вход"))
     }
 
     override fun handle(request: HttpServletRequest, response: HttpServletResponse, exception: org.springframework.security.access.AccessDeniedException) {
         val reason = if (exception is org.springframework.security.web.csrf.CsrfException) "MISSING_OR_INVALID_CSRF" else "FORBIDDEN"
-        AppLog.event("security.request.rejected", Outcome.REJECTED, Level.WARN, mapOf("reasonCode" to reason))
+        AppLog.event(REQUEST_REJECTED, Outcome.REJECTED, Level.WARN, mapOf("reasonCode" to reason))
         write(response, 403, ApiError("FORBIDDEN", "Доступ запрещён"))
     }
 
@@ -42,6 +42,11 @@ class SecurityResponses(private val mapper: ObjectMapper) : AuthenticationEntryP
         }
     }
 
+    fun sessionExpired(response: HttpServletResponse) {
+        AppLog.event(REQUEST_REJECTED, Outcome.REJECTED, Level.WARN, mapOf("reasonCode" to "SESSION_EXPIRED"))
+        write(response, 401, ApiError("SESSION_EXPIRED", "Сеанс завершён. Войдите снова"))
+    }
+
     fun authenticationSuccess(response: HttpServletResponse, authentication: Authentication) {
         AppLog.event("auth.login.succeeded", Outcome.SUCCESS, fields = mapOf("accountId" to (authentication.principal as AccountPrincipal).accountId))
         write(response, 200, (authentication.principal as AccountPrincipal).toCurrentIdentity())
@@ -53,4 +58,6 @@ class SecurityResponses(private val mapper: ObjectMapper) : AuthenticationEntryP
         response.characterEncoding = "UTF-8"
         mapper.writeValue(response.writer, body)
     }
+    private companion object { const val REQUEST_REJECTED = "security.request.rejected" }
+
 }

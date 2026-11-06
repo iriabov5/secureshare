@@ -67,3 +67,8 @@ tasks.bootJar {
     dependsOn(":frontendBuild")
     from(rootProject.file("frontend/dist")) { into("BOOT-INF/classes/static") }
 }
+
+tasks.processTestResources {
+    dependsOn(":frontendBuild")
+    from(rootProject.file("frontend/dist")) { into("static") }
+}

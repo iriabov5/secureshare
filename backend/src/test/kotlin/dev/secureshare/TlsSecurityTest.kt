@@ -68,6 +68,7 @@ object TestTls {
 class TlsSecurityTest {
     @LocalServerPort private var port = 0
     @org.springframework.beans.factory.annotation.Autowired private lateinit var probe: SessionProbe
+    @org.springframework.beans.factory.annotation.Autowired private lateinit var activeSessions: dev.secureshare.sessions.ActiveSessions
     @org.springframework.beans.factory.annotation.Autowired private lateinit var environment: org.springframework.core.env.Environment
 
     @Test
@@ -85,12 +86,15 @@ class TlsSecurityTest {
         assertEquals(201, b.post(REGISTER, mapOf("username" to username, "password" to password, "_csrf" to tools.jackson.module.kotlin.jacksonObjectMapper().readTree(page.body())["token"].asString())).statusCode())
         assertEquals(200, b.post(LOGIN, mapOf("username" to username, "password" to password, "_csrf" to b.csrf())).statusCode())
         assertEquals(200, b.get(ME).statusCode())
+        val activeId = b.sessionId()
+        assertNotNull(activeSessions.getSessionInformation(activeId))
         val session = probe.sessions.values.first { it.id == b.sessionId() }
         // Уменьшаем только тестовую сессию; штатный timeout проверен выше.
         session.maxInactiveInterval = 1
         val lastAccess = session.lastAccessedTime
         await().atMost(Duration.ofSeconds(4)).until { System.currentTimeMillis() - lastAccess > 1200 }
         assertEquals(401, b.get(ME).statusCode())
+        assertNull(activeSessions.getSessionInformation(activeId))
         assertEquals(200, b.get(APP).statusCode())
         // Повторно входим и проверяем Secure cookie удаления именно в HTTPS.
         assertEquals(200, b.post(LOGIN, mapOf("username" to username, "password" to password, "_csrf" to b.csrf())).statusCode())

@@ -1,4 +1,4 @@
-import type { Credentials, CsrfToken, FileInfo, User } from './types';
+import type { ActiveSessionList, Credentials, CsrfToken, FileInfo, User } from './types';
 
 export class HttpError extends Error {
   readonly status: number;
@@ -71,6 +71,21 @@ async function refreshCsrf(): Promise<void> {
 }
 
 export const api = {
+  async sessions(signal?: AbortSignal): Promise<ActiveSessionList> {
+    return jsonResponse<ActiveSessionList>(
+      await fetch('/api/v1/me/sessions', { credentials: 'include', signal }),
+    );
+  },
+  async revokeSession(id: string): Promise<void> {
+    const token = await csrf();
+    return jsonResponse<void>(
+      await fetch(`/api/v1/me/sessions/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { [token.headerName]: token.token },
+      }),
+    );
+  },
   async me(signal?: AbortSignal): Promise<User> {
     return jsonResponse<User>(await fetch('/api/v1/me', { credentials: 'include', signal }));
   },

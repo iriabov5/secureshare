@@ -40,6 +40,7 @@ class FileDependencyOutageTest {
         val docker = org.testcontainers.DockerClientFactory.instance().client()
         docker.pauseContainerCmd(store.container.containerId).exec()
         try {
+            assertEquals(200, owner.get("/api/v1/me/sessions").statusCode())
             assertEquals(403, other.get(TestEndpoints.fileContent(id)).statusCode())
             assertEquals(503, owner.get(TestEndpoints.fileContent(id)).statusCode())
             val failed = owner.multipart(FILES_API, "failed.txt", "not ready".toByteArray(), csrf)
