@@ -37,16 +37,21 @@ class FileDependencyOutageTest {
         assertEquals(201, response.statusCode())
         val id = UUID.fromString(mapper.readTree(response.body())["id"].asString())
         val csrf = owner.csrf()
+        val otherCsrf = other.csrf()
         val docker = org.testcontainers.DockerClientFactory.instance().client()
         docker.pauseContainerCmd(store.container.containerId).exec()
         try {
             assertEquals(200, owner.get("/api/v1/me/sessions").statusCode())
             assertEquals(403, other.get(TestEndpoints.fileContent(id)).statusCode())
+            assertEquals(403, other.post(TestEndpoints.integrityCheck(id), mapOf("_csrf" to otherCsrf)).statusCode())
+            assertFileOperationUnavailable(owner, TestEndpoints.integrityCheck(id), csrf)
             assertEquals(503, owner.get(TestEndpoints.fileContent(id)).statusCode())
             val failed = owner.multipart(FILES_API, "failed.txt", "not ready".toByteArray(), csrf)
             assertEquals(503, failed.statusCode())
             assertFalse(failed.body().contains("AWS")); assertFalse(failed.body().contains(store.secret))
-            assertEquals(1, mapper.readTree(owner.get(FILES_API).body()).size())
+            val listed = mapper.readTree(owner.get(FILES_API).body())
+            assertEquals(1, listed.size())
+            assertEquals("ENCRYPTED", listed[0]["storageStatus"].asString())
         } finally { docker.unpauseContainerCmd(store.container.containerId).exec() }
         assertEquals(200, owner.get(TestEndpoints.fileContent(id)).statusCode())
     }
@@ -66,9 +71,19 @@ class FileDependencyOutageTest {
                 assertEquals(503, failed.statusCode())
                 assertEquals("FILE_SERVICE_UNAVAILABLE", mapper.readTree(failed.body())["code"].asString())
             }
+            assertFileOperationUnavailable(owner, TestEndpoints.integrityCheck(id), csrf)
+            assertFileOperationUnavailable(owner, TestEndpoints.encryptFile(id), csrf)
             assertEquals(503, owner.multipart(FILES_API, "failed.txt", "fail".toByteArray(), csrf).statusCode())
         } finally { docker.unpauseContainerCmd(postgres.containerId).exec() }
         assertEquals(200, owner.get(TestEndpoints.fileContent(id)).statusCode())
+    }
+
+    private fun assertFileOperationUnavailable(browser: Browser, endpoint: String, csrf: String) {
+        val failed = browser.post(endpoint, mapOf("_csrf" to csrf))
+        assertEquals(503, failed.statusCode())
+        val body = mapper.readTree(failed.body())
+        assertEquals(setOf("code", "message"), body.propertyNames().toSet())
+        assertEquals("FILE_SERVICE_UNAVAILABLE", body["code"].asString())
     }
 
     companion object {
@@ -76,6 +91,7 @@ class FileDependencyOutageTest {
         private val postgres = PostgreSQLContainer(org.testcontainers.utility.DockerImageName.parse("postgres:17.6-alpine")).apply { start() }
         @JvmStatic @DynamicPropertySource
         fun properties(registry: DynamicPropertyRegistry) {
+            TestFileKeys.properties(registry)
             store.properties(registry)
             registry.add("spring.datasource.url") { postgres.jdbcUrl + "&socketTimeout=2&connectTimeout=2" }
             registry.add("spring.datasource.username", postgres::getUsername)

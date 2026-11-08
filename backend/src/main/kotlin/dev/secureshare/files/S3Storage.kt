@@ -26,6 +26,7 @@ import software.amazon.awssdk.core.exception.SdkClientException
 import java.io.IOException
 import java.net.URI
 import java.time.Duration
+import java.util.UUID
 
 @ConfigurationProperties("storage.s3")
 class S3Properties(
@@ -64,8 +65,8 @@ class S3Configuration {
 }
 
 @Component
-class S3Storage(private val client: S3Client, private val properties: S3Properties) : ObjectStorage {
-    override fun put(key: String, bytes: ByteArray) {
+class S3Storage(private val client: S3Client, private val properties: S3Properties) {
+    fun put(key: String, bytes: ByteArray) {
         try {
             client.putObject(PutObjectRequest.builder().bucket(properties.bucket).key(key).contentType("application/octet-stream").build(), RequestBody.fromBytes(bytes))
         } catch (exception: SdkException) {
@@ -73,17 +74,30 @@ class S3Storage(private val client: S3Client, private val properties: S3Properti
         }
     }
 
-    override fun get(file: StoredFile): ByteArray {
+    fun get(key: String, expectedSize: Long, fileId: UUID): ByteArray {
+        if (expectedSize !in 1L..FileEncryption.MAX_STORED_BYTES.toLong()) {
+            throw FileUnavailableException(stage = Stage.FILE_INTEGRITY, fileId = fileId)
+        }
         try {
-            client.getObject(GetObjectRequest.builder().bucket(properties.bucket).key(file.objectKey).build()).use { stream ->
-                val bytes = stream.readNBytes(file.sizeBytes.toInt() + 1)
-                if (bytes.size.toLong() != file.sizeBytes || FilePolicy.sha256(bytes) != file.sha256) throw FileUnavailableException(stage = Stage.FILE_INTEGRITY, fileId = file.id)
+            client.getObject(GetObjectRequest.builder().bucket(properties.bucket).key(key).build()).use { stream ->
+                val bytes = stream.readNBytes(expectedSize.toInt() + 1)
+                if (bytes.size.toLong() != expectedSize) {
+                    throw FileUnavailableException(stage = Stage.FILE_INTEGRITY, fileId = fileId)
+                }
                 return bytes
             }
         } catch (exception: SdkException) {
-            throw FileUnavailableException(exception, Stage.S3_GET, fileId = file.id)
+            throw FileUnavailableException(exception, Stage.S3_GET, fileId = fileId)
         } catch (exception: IOException) {
-            throw FileUnavailableException(exception, Stage.S3_GET, fileId = file.id)
+            throw FileUnavailableException(exception, Stage.S3_GET, fileId = fileId)
+        }
+    }
+
+    fun delete(key: String, fileId: UUID) {
+        try {
+            client.deleteObject { it.bucket(properties.bucket).key(key) }
+        } catch (exception: SdkException) {
+            throw FileUnavailableException(exception, Stage.S3_DELETE, fileId = fileId)
         }
     }
 }

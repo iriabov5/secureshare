@@ -47,6 +47,8 @@ logging:
     org.hibernate.engine.jdbc.spi.SqlExceptionHelper: OFF
 
 storage:
+  encryption:
+    keyset-path: ${FILE_ENCRYPTION_KEYSET:}
   s3:
     endpoint: ${S3_ENDPOINT:}
     region: ${S3_REGION:us-east-1}

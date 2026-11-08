@@ -30,7 +30,9 @@ rg 'нужный-request-id' backend.log
 | file.upload.succeeded | INFO только после подтверждённых PUT и READY commit |
 | file.list.succeeded | INFO: resultCount готовых собственных файлов |
 | file.download.succeeded | INFO: сервер закончил выдачу response без ошибки; не доказывает сохранение браузером |
-| file.upload.rejected / file.download.rejected | WARN: INVALID_FILE / FILE_TOO_LARGE; содержимое и имя не выводятся |
+| file.integrity-check.succeeded | INFO: хранимый объект прошёл ручную проверку |
+| file.encryption.succeeded | INFO: активный объект зашифрован, удаление старой копии подтверждено |
+| file.upload.rejected / file.download.rejected / file.integrity-check.rejected / file.encryption.rejected | WARN: INVALID_FILE / FILE_TOO_LARGE / FILE_ENCRYPTION_IN_PROGRESS; содержимое и имя не выводятся |
 | operation.failed | ERROR: operation, dependency, stage, reasonCode, error.type/rootCauseType и безопасные stackFrames |
 
 HTTP completion и итог прикладной операции — разные записи. Один operation failure не печатается в каждом catch. Обычный validation/security отказ не содержит stack trace. Непредвиденная ошибка в servlet chain перехватывается после безопасной диагностики: 500 INTERNAL_ERROR, без передачи исходного Throwable в контейнерный logger. При committed response status изменить уже нельзя; outcome остаётся ERROR/CLIENT_DISCONNECTED, а не SUCCESS.

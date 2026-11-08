@@ -65,6 +65,8 @@ class DatabaseOutageTest {
         private val postgres = PostgreSQLContainer(org.testcontainers.utility.DockerImageName.parse("postgres:17.6-alpine")).apply { start() }
         @JvmStatic @DynamicPropertySource
         fun database(registry: DynamicPropertyRegistry) {
+            TestFileKeys.properties(registry)
+
             registry.add("spring.datasource.url") { postgres.jdbcUrl + "&socketTimeout=2&connectTimeout=2" }
             registry.add("spring.datasource.username", postgres::getUsername)
             registry.add("spring.datasource.password", postgres::getPassword)

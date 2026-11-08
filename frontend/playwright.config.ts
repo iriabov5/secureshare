@@ -1,6 +1,8 @@
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
+  // browser-check.py создаёт старые объекты в тестовых PostgreSQL и S3.
+  grepInvert: process.env.E2E_LEGACY_FIXTURE ? undefined : /@legacy-fixture/,
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,

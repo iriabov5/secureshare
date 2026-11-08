@@ -11,9 +11,14 @@ import dev.secureshare.TestEndpoints.FILES_API
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import dev.secureshare.files.*
 import dev.secureshare.security.AccountPrincipal
+import dev.secureshare.files.migration.EncryptionMigration
+import software.amazon.awssdk.core.sync.RequestBody
+import software.amazon.awssdk.services.s3.model.S3Exception
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito.*
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
@@ -33,7 +38,13 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 private const val REDACTED = "<redacted>"
 private const val VALID_FILE_NAME = "ok.txt"
@@ -47,6 +58,8 @@ class OwnFilesHttpTest {
     @Autowired private lateinit var catalog: FileCatalog
     @Autowired private lateinit var service: FileService
     @Autowired private lateinit var s3: S3Client
+    @Autowired private lateinit var migration: EncryptionMigration
+    @MockitoSpyBean private lateinit var s3Storage: S3Storage
     @Autowired private lateinit var mvc: MockMvc
     private val mapper = jacksonObjectMapper()
     private fun browser() = Browser("http://localhost:$port")
@@ -64,8 +77,10 @@ class OwnFilesHttpTest {
         }
         assertEquals(201, response.statusCode(), response.body())
         val info = mapper.readTree(response.body())
-        assertEquals(setOf("id", "name", "sizeBytes", "sha256", "createdAt"), info.propertyNames().toSet())
+        assertEquals(setOf("id", "name", "sizeBytes", "sha256", "createdAt", "storageStatus", "legacyCleanupPending"), info.propertyNames().toSet())
         assertEquals(FilePolicy.sha256(bytes), info["sha256"].asString())
+        assertEquals("ENCRYPTED", info["storageStatus"].asString())
+        assertFalse(info["legacyCleanupPending"].asBoolean())
         return UUID.fromString(info["id"].asString())
     }
 
@@ -90,6 +105,55 @@ class OwnFilesHttpTest {
         assertEquals(400, owner.get("/api/v1/files/not-a-uuid/content").statusCode())
     }
 
+    private fun assertVerified(browser: Browser, id: UUID) {
+        val response = browser.post(TestEndpoints.integrityCheck(id), mapOf("_csrf" to browser.csrf()))
+        assertEquals(200, response.statusCode())
+        assertTrue(response.headers().firstValue("content-type").orElseThrow().startsWith(MediaType.APPLICATION_JSON_VALUE))
+        assertEquals("no-store", response.headers().firstValue("cache-control").orElseThrow())
+        assertTrue(response.headers().firstValue("content-disposition").isEmpty)
+        val body = mapper.readTree(response.body())
+        assertEquals(setOf("status", "checkedAt"), body.propertyNames().toSet())
+        assertEquals("VERIFIED", body["status"].asString())
+        assertNotNull(Instant.parse(body["checkedAt"].asString()))
+    }
+
+    private fun assertIntegrityUnavailable(browser: Browser, id: UUID) {
+        val response = browser.post(TestEndpoints.integrityCheck(id), mapOf("_csrf" to browser.csrf()))
+        assertEquals(503, response.statusCode())
+        val body = mapper.readTree(response.body())
+        assertEquals(setOf("code", "message"), body.propertyNames().toSet())
+        assertEquals("FILE_SERVICE_UNAVAILABLE", body["code"].asString())
+    }
+
+    @Test
+    @DisplayName("Проверка целостности требует сессию, CSRF и готовый файл владельца")
+    fun integrityCheckAccess() {
+        val (owner, _) = account()
+        val (other, _) = account()
+        val anonymous = browser()
+        val id = upload(owner)
+        val path = TestEndpoints.integrityCheck(id)
+        val csrf = owner.csrf()
+
+        assertVerified(owner, id)
+        assertEquals(401, anonymous.post(path, mapOf("_csrf" to anonymous.csrf())).statusCode())
+        assertEquals(403, owner.post(path, emptyMap()).statusCode())
+        assertEquals(403, owner.post(path, mapOf("_csrf" to "invalid")).statusCode())
+        val forbidden = other.post(path, mapOf("_csrf" to other.csrf()))
+        assertEquals(403, forbidden.statusCode())
+        val missing = owner.post(TestEndpoints.integrityCheck(UUID.randomUUID()), mapOf("_csrf" to csrf))
+        assertEquals(403, missing.statusCode())
+        assertEquals(forbidden.body(), missing.body())
+        val invalid = owner.post("$FILES_API/not-a-uuid/integrity-check", mapOf("_csrf" to csrf))
+        assertEquals(400, invalid.statusCode())
+        assertEquals("INVALID_FILE", mapper.readTree(invalid.body())["code"].asString())
+
+        jdbc.update("update stored_files set status='FAILED' where id=?", id)
+        val unready = owner.post(path, mapOf("_csrf" to csrf))
+        assertEquals(403, unready.statusCode())
+        assertEquals(forbidden.body(), unready.body())
+    }
+
     @Test
     @DisplayName("Multipart требует CSRF header до разбора тела и не принимает клиентского владельца")
     fun csrfAndForgedOwner() {
@@ -102,7 +166,7 @@ class OwnFilesHttpTest {
         assertEquals(201, response.statusCode())
         val id = UUID.fromString(mapper.readTree(response.body())["id"].asString())
         val key = jdbc.queryForObject("select object_key from stored_files where id=?", String::class.java, id)!!
-        assertEquals("files/$id", key)
+        assertEquals("encrypted/v1/$id", key)
         assertEquals(ownerId, jdbc.queryForObject("select owner_id from stored_files where id=?", UUID::class.java, id))
         val anonymous = browser()
         assertEquals(401, anonymous.multipart(FILES_API, VALID_FILE_NAME, content, anonymous.csrf()).statusCode())
@@ -150,7 +214,7 @@ class OwnFilesHttpTest {
     fun privacyAndPersistence() {
         val (b, _) = account(); val bytes = "persistent content".toByteArray(); val id = upload(b, bytes)
         val endpoint = TestObjectStore.endpoint()
-        val direct = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create("$endpoint/${TestObjectStore.bucket}/files/$id")).GET().build(), HttpResponse.BodyHandlers.discarding())
+        val direct = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create("$endpoint/${TestObjectStore.bucket}/encrypted/v1/$id")).GET().build(), HttpResponse.BodyHandlers.discarding())
         assertEquals(403, direct.statusCode())
         val docker = org.testcontainers.DockerClientFactory.instance().client()
         docker.restartContainerCmd(TestObjectStore.container.containerId).exec()
@@ -173,7 +237,7 @@ class OwnFilesHttpTest {
     @DisplayName("Отсутствующий или повреждённый S3 объект не выдаётся как успешный файл")
     fun missingAndCorruptedObject() {
         val (b, _) = account(); val id = upload(b)
-        val objectKey = "files/$id"
+        val objectKey = "encrypted/v1/$id"
         s3.putObject({ it.bucket(TestObjectStore.bucket).key(objectKey) }, software.amazon.awssdk.core.sync.RequestBody.fromString("corrupted"))
         val corrupt = b.get(TestEndpoints.fileContent(id))
         assertEquals(503, corrupt.statusCode())
@@ -181,6 +245,215 @@ class OwnFilesHttpTest {
         assertFalse(corrupt.body().contains("corrupted"))
         s3.deleteObject { it.bucket(TestObjectStore.bucket).key(objectKey) }
         assertEquals(503, b.get(TestEndpoints.fileContent(id)).statusCode())
+        assertIntegrityUnavailable(b, id)
+    }
+
+    @Test
+    @DisplayName("В бакете шифротекст, а подмена объектом того же размера и порча тега отклоняются")
+    fun encryptedObjectAndTampering() {
+        val (browser, _) = account()
+        val bytes = "same data".toByteArray()
+        val first = upload(browser, bytes)
+        val second = upload(browser, bytes)
+        val firstKey = encryptedObjectKey(first)
+        val ciphertext = rawObject(firstKey)
+        val other = rawObject(encryptedObjectKey(second))
+        assertEquals(bytes.size + FileEncryption.OVERHEAD, ciphertext.size)
+        assertFalse(ciphertext.contentEquals(bytes))
+        assertFalse(ciphertext.contentEquals(other))
+        assertArrayEquals(bytes, browser.bytes(TestEndpoints.fileContent(first)).body())
+
+        for (altered in listOf(other, ciphertext.clone().apply { this[lastIndex] = (last().toInt() xor 1).toByte() })) {
+            putRaw(firstKey, altered)
+            val response = browser.get(TestEndpoints.fileContent(first))
+            assertEquals(503, response.statusCode())
+            assertEquals("FILE_SERVICE_UNAVAILABLE", mapper.readTree(response.body())["code"].asString())
+            assertFalse(response.body().contains("same data"))
+            assertIntegrityUnavailable(browser, first)
+        }
+    }
+
+    @Test
+    @DisplayName("Шифрование требует сессию, CSRF и владение готовым файлом до обращения к S3")
+    fun encryptAccess() {
+        val (browser, owner) = account()
+        val (other, _) = account()
+        val anonymous = browser()
+        val id = legacyFile(owner, "legacy".toByteArray())
+        val path = TestEndpoints.encryptFile(id)
+        val csrf = browser.csrf()
+        clearInvocations(s3Storage)
+
+        assertEquals(401, anonymous.post(path, mapOf("_csrf" to anonymous.csrf())).statusCode())
+        assertEquals(403, browser.post(path, emptyMap()).statusCode())
+        assertEquals(403, browser.post(path, mapOf("_csrf" to "invalid")).statusCode())
+        val forbidden = other.post(path, mapOf("_csrf" to other.csrf()))
+        assertEquals(403, forbidden.statusCode())
+        val missing = browser.post(TestEndpoints.encryptFile(UUID.randomUUID()), mapOf("_csrf" to csrf))
+        assertEquals(403, missing.statusCode())
+        assertEquals(forbidden.body(), missing.body())
+        val invalid = browser.post("$FILES_API/not-a-uuid/encrypt", mapOf("_csrf" to csrf))
+        assertEquals(400, invalid.statusCode())
+        assertEquals("INVALID_FILE", mapper.readTree(invalid.body())["code"].asString())
+        jdbc.update("update stored_files set status='FAILED' where id=?", id)
+        val unready = browser.post(path, mapOf("_csrf" to csrf))
+        assertEquals(403, unready.statusCode())
+        assertEquals(forbidden.body(), unready.body())
+        verifyNoInteractions(s3Storage)
+    }
+
+    @Test
+    @DisplayName("Перенос сохраняет исходник при ошибке и завершает очистку отдельным повтором")
+    fun encryptAndRetryCleanup() {
+        val (browser, owner) = account()
+        val bytes = "legacy payload".toByteArray()
+        val id = legacyFile(owner, bytes)
+        val oldKey = "files/$id"
+        val path = TestEndpoints.encryptFile(id)
+        val csrf = mapOf("_csrf" to browser.csrf())
+        val before = mapper.readTree(browser.get(FILES_API).body())[0]
+        putRaw(oldKey, ByteArray(bytes.size))
+
+        val corrupt = browser.post(path, csrf)
+        assertEquals(503, corrupt.statusCode())
+        assertEquals("FILE_SERVICE_UNAVAILABLE", mapper.readTree(corrupt.body())["code"].asString())
+        assertEquals(oldKey, activeObjectKey(id))
+        assertEquals(before, mapper.readTree(browser.get(FILES_API).body())[0])
+
+        putRaw(oldKey, bytes)
+        doThrow(FileUnavailableException(stage = dev.secureshare.observability.Stage.S3_DELETE, fileId = id))
+            .doCallRealMethod().`when`(s3Storage).delete(oldKey, id)
+        assertEquals(503, browser.post(path, csrf).statusCode())
+        val pending = mapper.readTree(browser.get(FILES_API).body())[0]
+        assertEquals("ENCRYPTED", pending["storageStatus"].asString())
+        assertTrue(pending["legacyCleanupPending"].asBoolean())
+        assertArrayEquals(bytes, rawObject(oldKey))
+        assertArrayEquals(bytes, browser.bytes(TestEndpoints.fileContent(id)).body())
+
+        val done = browser.post(path, csrf)
+        assertEquals(200, done.statusCode())
+        assertEquals("no-store", done.headers().firstValue("cache-control").orElseThrow())
+        val info = mapper.readTree(done.body())
+        assertEquals(before.propertyNames(), info.propertyNames())
+        for (field in listOf("id", "name", "sizeBytes", "sha256", "createdAt")) assertEquals(before[field], info[field])
+        assertEquals("ENCRYPTED", info["storageStatus"].asString())
+        assertFalse(info["legacyCleanupPending"].asBoolean())
+        assertEquals(404, assertThrows(S3Exception::class.java) { rawObject(oldKey) }.statusCode())
+
+        clearInvocations(s3Storage)
+        assertEquals(done.body(), browser.post(path, csrf).body())
+        verifyNoInteractions(s3Storage)
+    }
+
+    @Test
+    @DisplayName("Параллельный перенос сериализуется, скачивание и проверка перечитывают новый ключ")
+    fun encryptDuringRead() {
+        val (browser, owner) = account()
+        val bytes = "legacy payload".toByteArray()
+        val id = legacyFile(owner, bytes)
+        val oldKey = "files/$id"
+        val csrf = mapOf("_csrf" to browser.csrf())
+        val path = TestEndpoints.encryptFile(id)
+        val oldReaders = CountDownLatch(2)
+        val resumeReaders = CountDownLatch(1)
+        val migrationReads = CountDownLatch(1)
+        val resumeMigration = CountDownLatch(1)
+        val readers = AtomicInteger()
+        doAnswer { call ->
+            if (readers.incrementAndGet() <= 2) {
+                oldReaders.countDown()
+                check(resumeReaders.await(10, TimeUnit.SECONDS))
+            } else {
+                migrationReads.countDown()
+                check(resumeMigration.await(10, TimeUnit.SECONDS))
+            }
+            call.callRealMethod()
+        }.`when`(s3Storage).get(oldKey, bytes.size.toLong(), id)
+
+        Executors.newVirtualThreadPerTaskExecutor().use { executor ->
+            val download = CompletableFuture.supplyAsync({ browser.bytes(TestEndpoints.fileContent(id)) }, executor)
+            val integrity = CompletableFuture.supplyAsync({ browser.post(TestEndpoints.integrityCheck(id), csrf) }, executor)
+            try {
+                assertTrue(oldReaders.await(5, TimeUnit.SECONDS))
+                val encrypt = CompletableFuture.supplyAsync({ browser.post(path, csrf) }, executor)
+                assertTrue(migrationReads.await(5, TimeUnit.SECONDS))
+                val duplicate = browser.post(path, csrf)
+                assertEquals(409, duplicate.statusCode())
+                assertEquals("FILE_ENCRYPTION_IN_PROGRESS", mapper.readTree(duplicate.body())["code"].asString())
+                assertEquals(EncryptionMigration.Result(0, 0, 1), migration.run())
+                resumeMigration.countDown()
+                assertEquals(200, encrypt.get(10, TimeUnit.SECONDS).statusCode())
+            } finally {
+                resumeMigration.countDown()
+                resumeReaders.countDown()
+            }
+            assertArrayEquals(bytes, download.get(10, TimeUnit.SECONDS).body())
+            assertEquals(200, integrity.get(10, TimeUnit.SECONDS).statusCode())
+            assertEquals(3, readers.get())
+        }
+    }
+
+    private fun legacyFile(owner: UUID, bytes: ByteArray): UUID {
+        val id = UUID.randomUUID()
+        val key = "files/$id"
+        putRaw(key, bytes)
+        jdbc.update(
+            """insert into stored_files
+                (id, owner_id, original_name, size_bytes, sha256, object_key, status, created_at, storage_format)
+                values (?, ?, ?, ?, ?, ?, 'READY', now(), 'LEGACY_PLAIN')""",
+            id, owner, "legacy.txt", bytes.size.toLong(), FilePolicy.sha256(bytes), key,
+        )
+        return id
+    }
+
+    @Test
+    @DisplayName("Перенос проверяет исходник, сохраняет UUID и умеет повторить незавершённую очистку")
+    fun migrateLegacyFile() {
+        val (browser, owner) = account()
+        val bytes = "legacy payload".toByteArray()
+        val id = legacyFile(owner, bytes)
+        val oldKey = "files/$id"
+        val newKey = encryptedObjectKey(id)
+        val newFile = upload(browser)
+        fun statuses() = mapper.readTree(browser.get(FILES_API).body()).associate { it["id"].asString() to it["storageStatus"].asString() }
+        assertEquals(mapOf(id.toString() to "PENDING_MIGRATION", newFile.toString() to "ENCRYPTED"), statuses())
+
+        putRaw(oldKey, ByteArray(bytes.size))
+        assertIntegrityUnavailable(browser, id)
+        assertEquals(1L, migration.run().remaining)
+        assertEquals(oldKey, activeObjectKey(id))
+        putRaw(oldKey, bytes)
+        assertVerified(browser, id)
+        assertArrayEquals(bytes, browser.bytes(TestEndpoints.fileContent(id)).body())
+
+        assertEquals(EncryptionMigration.Result(1, 1, 0), migration.run())
+        assertEquals(newKey, activeObjectKey(id))
+        assertEquals("ENCRYPTED", statuses()[id.toString()])
+        assertVerified(browser, id)
+        assertArrayEquals(bytes, browser.bytes(TestEndpoints.fileContent(id)).body())
+        val encrypted = rawObject(newKey)
+        assertFalse(encrypted.contentEquals(bytes))
+        assertEquals(404, assertThrows(S3Exception::class.java) { rawObject(oldKey) }.statusCode())
+
+        // Состояние после подтверждённого переключения и до удаления оригинала.
+        putRaw(oldKey, bytes)
+        jdbc.update("update stored_files set legacy_object_key=? where id=?", oldKey, id)
+        putRaw(newKey, ByteArray(encrypted.size))
+        assertEquals(EncryptionMigration.Result(0, 0, 1), migration.run())
+        assertArrayEquals(bytes, rawObject(oldKey))
+        putRaw(newKey, encrypted)
+        assertEquals(EncryptionMigration.Result(0, 1, 0), migration.run())
+        assertEquals(EncryptionMigration.Result(0, 0, 0), migration.run())
+    }
+
+    private fun activeObjectKey(id: UUID) =
+        jdbc.queryForObject("select object_key from stored_files where id=?", String::class.java, id)
+
+    private fun rawObject(key: String) =
+        s3.getObjectAsBytes { it.bucket(TestObjectStore.bucket).key(key) }.asByteArray()
+
+    private fun putRaw(key: String, bytes: ByteArray) {
+        s3.putObject({ it.bucket(TestObjectStore.bucket).key(key) }, RequestBody.fromBytes(bytes))
     }
 
     @Test
@@ -190,6 +463,10 @@ class OwnFilesHttpTest {
         val paths = doc["paths"] as Map<*, *>
         val uploadSpec = ((paths[FILES_API] as Map<*, *>)["post"] as Map<*, *>)
         assertEquals(setOf("201", "400", "401", "403", "413", "500", "503"), (uploadSpec["responses"] as Map<*, *>).keys)
+        val checkSpec = (paths["$FILES_API/{id}/integrity-check"] as Map<*, *>)["post"] as Map<*, *>
+        assertEquals(setOf("200", "400", "401", "403", "500", "503"), (checkSpec["responses"] as Map<*, *>).keys)
+        val encryptSpec = (paths["$FILES_API/{id}/encrypt"] as Map<*, *>)["post"] as Map<*, *>
+        assertEquals(setOf("200", "400", "401", "403", "409", "500", "503"), (encryptSpec["responses"] as Map<*, *>).keys)
         val components = doc["components"] as Map<*, *>
         val schema = ((components["schemas"] as Map<*, *>)["FileInfo"] as Map<*, *>)
         val (b, _) = account(); upload(b)

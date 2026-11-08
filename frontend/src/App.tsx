@@ -26,7 +26,7 @@ export function App() {
         path="/register"
         element={user ? <Navigate to="/files" replace /> : <AuthPage key="register" mode="register" />}
       />
-      <Route path="/files" element={user ? <FilesPage /> : <Navigate to="/login" replace />} />
+      <Route path="/files" element={user ? <FilesPage key={user.id} /> : <Navigate to="/login" replace />} />
       <Route path="/security" element={user ? <SecurityPage /> : <Navigate to="/login" replace />} />
       <Route path="/" element={<Navigate to="/files" replace />} />
       <Route path="/app" element={<Navigate to="/files" replace />} />

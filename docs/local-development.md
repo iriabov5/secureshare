@@ -4,10 +4,14 @@
 
 ```sh
 docker compose up -d postgres s3
+./gradlew :backend:generateFileKey
+export FILE_ENCRYPTION_KEYSET="$PWD/.secrets/files.tink-keyset"
 SPRING_PROFILES_ACTIVE=local ./gradlew :backend:bootRun
 ```
 
-Для запуска из IDE открыть проект как Gradle project, выбрать JDK 25 и main-класс `dev.secureshare.SecureShareApplicationKt` с classpath модуля `backend.main`. В Spring Boot configuration указать Active profiles: `local`; для обычной Application configuration — VM option `-Dspring.profiles.active=local`. DB/S3 environment variables не нужны. React dev server запускается отдельно командой `npm run dev`. Задачи `:backend:classes` и `:backend:bootRun` не требуют npm; React собирается и включается только в `bootJar`. Для полного приложения на порту 8080 выполнить `./gradlew bootJar`, затем `SPRING_PROFILES_ACTIVE=local java -jar backend/build/libs/backend-0.1.0.jar`.
+Команда генерации создаёт файл `.secrets/files.tink-keyset` с правами `0600` на POSIX. Выполните её один раз. После рестарта приложению нужен прежний ключ. Для запуска в другой среде передайте путь к тому же набору ключей через файл секрета. Резервную копию ключа храните отдельно от копии базы и бакета.
+
+Для запуска из IDE открыть проект как Gradle project, выбрать JDK 25 и main-класс `dev.secureshare.SecureShareApplicationKt` с classpath модуля `backend.main`. В Spring Boot configuration указать Active profiles: `local`; для обычной Application configuration — VM option `-Dspring.profiles.active=local`. В Run Configuration задайте `FILE_ENCRYPTION_KEYSET` с абсолютным путём к созданному файлу. Настройки DB/S3 берутся из профиля `local`. React dev server запускается отдельно командой `npm run dev`. Задачи `:backend:classes` и `:backend:bootRun` не требуют npm; React собирается и включается только в `bootJar`. Для полного приложения на порту 8080 выполнить `./gradlew bootJar`, затем `SPRING_PROFILES_ACTIVE=local java -jar backend/build/libs/backend-0.1.0.jar`.
 
 Локальные defaults находятся в `backend/src/main/resources/application-local.yaml` и совпадают с Compose:
 
@@ -71,6 +75,6 @@ JaCoCo проверяет минимум 80% строк и 80% ветвей бе
 python3 scripts/browser-check.py
 ```
 
-Нужен Python 3 и выбранный JDK 25 в JAVA_HOME/PATH. Скрипт удаляет свои контейнеры и останавливает приложение; рабочие volumes не используются. Скриншоты находятся в docs/screenshots, результаты Playwright — в frontend/test-results. Подробнее — [архитектура frontend](frontend.md).
+Нужны Python 3, curl с поддержкой AWS Signature V4 и выбранный JDK 25 в JAVA_HOME/PATH. Скрипт удаляет свои контейнеры и останавливает приложение; рабочие volumes не используются. Скриншоты находятся в docs/screenshots, результаты Playwright — в frontend/test-results. Подробнее — [архитектура frontend](frontend.md).
 
 Локальный SonarQube поддерживается Gradle-плагином. Передать SONAR_HOST_URL и SONAR_TOKEN через окружение и выполнить `./gradlew clean check bootJar sonar`. Токен не указывать в командной строке и не сохранять в проекте.

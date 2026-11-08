@@ -14,27 +14,27 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest
 import software.amazon.awssdk.core.sync.RequestBody
 import java.io.ByteArrayInputStream
 import java.io.InputStream
-import java.time.Instant
 import java.util.UUID
 
 class S3StorageTest {
     @Test
-    @DisplayName("S3 adapter проверяет размер и hash, закрывает поток и оборачивает IOException")
+    @DisplayName("S3 adapter ограничивает чтение ожидаемым размером, закрывает поток и оборачивает IOException")
     fun boundedReads() {
         val client = mock(S3Client::class.java); val storage = S3Storage(client, S3Properties())
         val bytes = "hello".toByteArray()
-        val file = StoredFile(UUID.randomUUID(), UUID.randomUUID(), "hello", 5, FilePolicy.sha256(bytes), "files/key", createdAt = Instant.EPOCH)
-        for (content in listOf(bytes, "hell".toByteArray(), "longer".toByteArray(), "other".toByteArray())) {
+        val fileId = UUID.randomUUID()
+        val key = "files/key"
+        for (content in listOf(bytes, "hell".toByteArray(), "longer".toByteArray())) {
             val stream = ResponseInputStream(GetObjectResponse.builder().build(), ByteArrayInputStream(content))
             `when`(client.getObject(any(GetObjectRequest::class.java))).thenReturn(stream)
-            if (content.contentEquals(bytes)) assertArrayEquals(bytes, storage.get(file))
-            else assertThrows(FileUnavailableException::class.java) { storage.get(file) }
+            if (content.contentEquals(bytes)) assertArrayEquals(bytes, storage.get(key, 5, fileId))
+            else assertThrows(FileUnavailableException::class.java) { storage.get(key, 5, fileId) }
         }
         val broken = object : InputStream() { override fun read(): Int = throw java.io.IOException("offline") }
         `when`(client.getObject(any(GetObjectRequest::class.java))).thenReturn(ResponseInputStream(GetObjectResponse.builder().build(), broken))
-        assertThrows(FileUnavailableException::class.java) { storage.get(file) }
+        assertThrows(FileUnavailableException::class.java) { storage.get(key, 5, fileId) }
         `when`(client.getObject(any(GetObjectRequest::class.java))).thenThrow(SdkClientException.create("offline"))
-        assertThrows(FileUnavailableException::class.java) { storage.get(file) }
+        assertThrows(FileUnavailableException::class.java) { storage.get(key, 5, fileId) }
     }
 
     @Test

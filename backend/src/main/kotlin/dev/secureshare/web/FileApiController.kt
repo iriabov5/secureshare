@@ -25,6 +25,14 @@ class FileApiController(private val files: FileService) {
     @GetMapping
     fun list() = files.list()
 
+    @PostMapping("/{id}/encrypt")
+    fun encrypt(@PathVariable id: UUID) =
+        ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(files.encrypt(id))
+
+    @PostMapping("/{id}/integrity-check")
+    fun checkIntegrity(@PathVariable id: UUID) =
+        ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(files.checkIntegrity(id))
+
     @GetMapping("/{id}/content")
     fun download(@PathVariable id: UUID, request: HttpServletRequest, @AuthenticationPrincipal principal: AccountPrincipal): ResponseEntity<ByteArray> {
         val result = files.download(id)

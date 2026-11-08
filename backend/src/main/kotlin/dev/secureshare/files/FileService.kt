@@ -1,5 +1,6 @@
 package dev.secureshare.files
 
+import dev.secureshare.files.migration.EncryptionMigration
 import dev.secureshare.observability.AppLog
 import dev.secureshare.observability.Outcome
 import dev.secureshare.observability.Stage
@@ -11,11 +12,18 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.TransactionException
 import org.springframework.web.multipart.MultipartFile
 import java.io.IOException
+import java.time.Clock
 import java.util.UUID
 
 @Service
 @PreAuthorize("isAuthenticated()")
-class FileService(private val catalog: FileCatalog, private val files: StoredFileRepository, private val storage: ObjectStorage) {
+class FileService(
+    private val catalog: FileCatalog,
+    private val files: StoredFileRepository,
+    private val storage: ObjectStorage,
+    private val clock: Clock,
+    private val migration: EncryptionMigration,
+) {
     fun upload(file: MultipartFile?): FileInfo {
         if (file == null) throw InvalidFileException()
         val name = FilePolicy.validate(file.originalFilename, file.size)
@@ -25,7 +33,7 @@ class FileService(private val catalog: FileCatalog, private val files: StoredFil
         val record = metadata(Stage.METADATA_CREATE) { catalog.create(owner, name, bytes) }
         AppLog.event("file.upload.started", fields = mapOf("accountId" to owner, "fileId" to record.id, "sizeBytes" to bytes.size))
         try {
-            storage.put(record.objectKey, bytes)
+            storage.put(record, bytes)
         } catch (exception: FileUnavailableException) {
             // PUT мог завершиться до timeout: сохраняем ключ для сверки, не удаляем объект.
             try { catalog.failed(record.id) } catch (failure: DataAccessException) { exception.addSuppressed(failure) }
@@ -45,11 +53,38 @@ class FileService(private val catalog: FileCatalog, private val files: StoredFil
         return result
     }
 
-    fun download(id: UUID): FileDownload {
-        val record = metadata(Stage.METADATA_LOAD, id) { catalog.loadForDownload(id) }
-        val bytes = storage.get(record)
-        return FileDownload(record.originalName, bytes)
+    fun encrypt(id: UUID): FileInfo {
+        val record = ownReadyFile(id)
+        val encrypted = migration.encrypt(id, record.ownerId)
+        AppLog.event("file.encryption.succeeded", Outcome.SUCCESS, fields = mapOf("accountId" to record.ownerId, "fileId" to id))
+        return encrypted.toInfo()
     }
+
+    fun download(id: UUID): FileDownload {
+        val record = ownReadyFile(id)
+        return FileDownload(record.originalName, readVerified(record))
+    }
+
+    fun checkIntegrity(id: UUID): FileIntegrityResult {
+        val record = ownReadyFile(id)
+        readVerified(record)
+        val checkedAt = clock.instant()
+        AppLog.event("file.integrity-check.succeeded", Outcome.SUCCESS, fields = mapOf("accountId" to record.ownerId, "fileId" to id))
+        return FileIntegrityResult(IntegrityStatus.VERIFIED, checkedAt)
+    }
+
+    private fun readVerified(record: StoredFile): ByteArray =
+        try {
+            storage.get(record)
+        } catch (failure: FileUnavailableException) {
+            if (record.storageFormat != StorageFormat.LEGACY_PLAIN) throw failure
+            val current = ownReadyFile(record.id)
+            if (current.storageFormat != StorageFormat.AEAD_V1 || current.objectKey == record.objectKey) throw failure
+            storage.get(current)
+        }
+
+    private fun ownReadyFile(id: UUID): StoredFile =
+        metadata(Stage.METADATA_LOAD, id) { catalog.loadForDownload(id) }
 
     private fun <T> metadata(stage: Stage, id: UUID? = null, outcome: Outcome = Outcome.ERROR, action: () -> T): T =
         try { action() }

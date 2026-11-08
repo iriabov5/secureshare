@@ -6,8 +6,8 @@ import org.slf4j.event.Level
 import java.util.UUID
 
 enum class Outcome { SUCCESS, REJECTED, ERROR, UNKNOWN, CLIENT_DISCONNECTED }
-enum class Stage { USER_LOOKUP, REGISTRATION_COMMIT, METADATA_CREATE, METADATA_LIST, METADATA_LOAD, METADATA_READY, S3_PUT, S3_GET, FILE_INTEGRITY, UNEXPECTED }
-enum class Operation { REGISTRATION, LOGIN, FILE_UPLOAD, FILE_LIST, FILE_DOWNLOAD, HTTP }
+enum class Stage { USER_LOOKUP, REGISTRATION_COMMIT, METADATA_CREATE, METADATA_LIST, METADATA_LOAD, METADATA_READY, S3_PUT, S3_GET, S3_DELETE, FILE_ENCRYPTION, FILE_INTEGRITY, UNEXPECTED }
+enum class Operation { REGISTRATION, LOGIN, FILE_UPLOAD, FILE_LIST, FILE_DOWNLOAD, FILE_INTEGRITY_CHECK, FILE_MIGRATION, HTTP }
 
 object AppLog {
     private val logger = LoggerFactory.getLogger("dev.secureshare.operations")
@@ -30,9 +30,9 @@ object AppLog {
             "rootCauseType" to generateSequence(exception) { it.cause }.last().javaClass.name,
         )
         when (actualStage) {
-            Stage.S3_PUT, Stage.S3_GET, Stage.FILE_INTEGRITY -> fields["dependency"] = "S3"
+            Stage.S3_PUT, Stage.S3_GET, Stage.S3_DELETE, Stage.FILE_INTEGRITY -> fields["dependency"] = "S3"
             Stage.USER_LOOKUP, Stage.REGISTRATION_COMMIT, Stage.METADATA_CREATE, Stage.METADATA_LIST, Stage.METADATA_LOAD, Stage.METADATA_READY -> fields["dependency"] = "POSTGRES"
-            Stage.UNEXPECTED -> Unit
+            Stage.FILE_ENCRYPTION, Stage.UNEXPECTED -> Unit
         }
         (context?.fileId ?: fileId)?.let { fields["fileId"] = it }
         if (exception.suppressed.isNotEmpty()) fields["cleanupOutcome"] = "FAILED"
@@ -41,6 +41,7 @@ object AppLog {
         event("operation.failed", context?.outcome ?: Outcome.ERROR, Level.ERROR, fields)
     }
     private fun reason(exception: Throwable, stage: Stage): String {
+        if (stage == Stage.FILE_ENCRYPTION) return "FILE_ENCRYPTION_FAILED"
         if (stage == Stage.FILE_INTEGRITY) return "FILE_INTEGRITY_MISMATCH"
         val causes = generateSequence(exception) { it.cause }.toList()
         if (causes.any { it is java.net.SocketTimeoutException || it is java.util.concurrent.TimeoutException ||

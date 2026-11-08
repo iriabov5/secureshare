@@ -59,6 +59,20 @@ test('Регистрация, вход, приватные файлы, скач�
   await page.getByRole('searchbox').clear();
   await page.getByLabel('Сортировка файлов').selectOption('name');
   await expect(page.getByRole('listitem')).toHaveCount(3);
+  await expect(page.getByText('Зашифрован', { exact: true })).toHaveCount(3);
+  const fileRow = page.getByRole('listitem').filter({ hasText: samples[0].name });
+  const integrityResponse = page.waitForResponse(
+    (response) => response.request().method() === 'POST' && response.url().endsWith('/integrity-check'),
+  );
+  const unexpectedDownloads: string[] = [];
+  page.on('download', (download) => unexpectedDownloads.push(download.suggestedFilename()));
+  await fileRow.getByRole('button', { name: `Проверить файл ${samples[0].name}` }).click();
+  const integrity = await integrityResponse;
+  expect(integrity.status()).toBe(200);
+  expect(integrity.headers()['cache-control']).toBe('no-store');
+  expect(await integrity.json()).toEqual({ status: 'VERIFIED', checkedAt: expect.any(String) });
+  await expect(fileRow.getByText('Целостность подтверждена')).toBeVisible();
+  expect(unexpectedDownloads).toEqual([]);
   await noOverflow(page);
   await page.screenshot({
     path: resolve('../docs/screenshots', `${testInfo.project.name}-files.png`),
@@ -181,3 +195,46 @@ test('Управление сеансами и отзыв доступа в др
     await other.close();
   }
 });
+
+test(
+  'Владелец шифрует старый файл и скачивает те же байты',
+  { tag: '@legacy-fixture' },
+  async ({ page }, testInfo) => {
+    await page.goto('/login');
+    await page.getByLabel('Логин', { exact: true }).fill(`legacy_${testInfo.project.name}`);
+    await page.getByLabel('Пароль', { exact: true }).fill('Legacy browser passphrase');
+    await page.getByRole('button', { name: 'Войти', exact: true }).click();
+
+    const row = page.getByRole('listitem').filter({ hasText: 'legacy.txt' });
+    await expect(row.getByText('Ожидает переноса')).toBeVisible();
+    await noOverflow(page);
+    await page.screenshot({
+      path: resolve('../docs/screenshots', `${testInfo.project.name}-legacy-file.png`),
+      fullPage: true,
+    });
+    await row.getByRole('button', { name: 'Проверить файл legacy.txt' }).click();
+    await expect(row.getByText('Целостность подтверждена')).toBeVisible();
+    await noOverflow(page);
+    const encryption = page.waitForResponse(
+      (response) => response.request().method() === 'POST' && response.url().endsWith('/encrypt'),
+    );
+    await row.getByRole('button', { name: 'Зашифровать файл legacy.txt' }).click();
+
+    const response = await encryption;
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toMatchObject({ storageStatus: 'ENCRYPTED', legacyCleanupPending: false });
+    await expect(row.getByText('Зашифрован', { exact: true })).toBeVisible();
+    await expect(row.getByText('Целостность подтверждена')).toHaveCount(0);
+    await expect(row.getByRole('button', { name: 'Зашифровать файл legacy.txt' })).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await noOverflow(page);
+    await page.screenshot({
+      path: resolve('../docs/screenshots', `${testInfo.project.name}-legacy-encrypted.png`),
+      fullPage: true,
+    });
+    const download = page.waitForEvent('download');
+    await row.getByRole('button', { name: 'Скачать legacy.txt' }).click();
+    expect(await readFile((await (await download).path())!, 'utf8')).toBe('Legacy browser file');
+    await noOverflow(page);
+  },
+);

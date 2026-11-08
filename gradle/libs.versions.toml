@@ -1,0 +1,5 @@
+[versions]
+tink = "1.24.0"
+
+[libraries]
+tink = { module = "com.google.crypto.tink:tink", version.ref = "tink" }

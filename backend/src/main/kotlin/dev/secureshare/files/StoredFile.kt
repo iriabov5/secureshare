@@ -19,7 +19,13 @@ class StoredFile(
     @Column(name = "object_key", nullable = false, length = 80) val objectKey: String,
     @Column(nullable = false, length = 16) val status: String = "UPLOADING",
     @Column(name = "created_at", nullable = false) val createdAt: Instant,
+    @Enumerated(EnumType.STRING)
+    @Column(name = "storage_format", nullable = false, length = 16) val storageFormat: StorageFormat,
+    @Column(name = "ciphertext_size_bytes") val ciphertextSizeBytes: Long? = null,
+    @Column(name = "legacy_object_key", length = 80) val legacyObjectKey: String? = null,
 )
+
+enum class StorageFormat { LEGACY_PLAIN, AEAD_V1 }
 
 interface StoredFileRepository : JpaRepository<StoredFile, UUID> {
     fun findAllByOwnerIdAndStatusOrderByCreatedAtDescIdDesc(ownerId: UUID, status: String): List<StoredFile>
@@ -30,6 +36,22 @@ interface StoredFileRepository : JpaRepository<StoredFile, UUID> {
     fun finish(id: UUID, status: String): Int
 }
 
-data class FileInfo(val id: UUID, val name: String, val sizeBytes: Long, val sha256: String, val createdAt: Instant)
+enum class StorageStatus { ENCRYPTED, PENDING_MIGRATION }
 
-fun StoredFile.toInfo() = FileInfo(id, originalName, sizeBytes, sha256, createdAt)
+data class FileInfo(
+    val id: UUID,
+    val name: String,
+    val sizeBytes: Long,
+    val sha256: String,
+    val createdAt: Instant,
+    val storageStatus: StorageStatus,
+    val legacyCleanupPending: Boolean,
+)
+
+fun StoredFile.toInfo(): FileInfo {
+    val storageStatus = when (storageFormat) {
+        StorageFormat.AEAD_V1 -> StorageStatus.ENCRYPTED
+        StorageFormat.LEGACY_PLAIN -> StorageStatus.PENDING_MIGRATION
+    }
+    return FileInfo(id, originalName, sizeBytes, sha256, createdAt, storageStatus, legacyObjectKey != null)
+}

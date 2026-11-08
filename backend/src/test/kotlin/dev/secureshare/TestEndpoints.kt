@@ -11,5 +11,7 @@ internal object TestEndpoints {
     const val FILES_PAGE = "/files"
     const val FILES_API = "/api/v1/files"
     const val UNLISTED_API = "/api/private"
+    fun encryptFile(id: UUID): String = "$FILES_API/$id/encrypt"
+    fun integrityCheck(id: UUID): String = "$FILES_API/$id/integrity-check"
     fun fileContent(id: UUID): String = "$FILES_API/$id/content"
 }

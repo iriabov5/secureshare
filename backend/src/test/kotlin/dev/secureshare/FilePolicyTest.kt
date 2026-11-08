@@ -1,6 +1,7 @@
 package dev.secureshare
 
 import dev.secureshare.files.*
+import dev.secureshare.files.migration.EncryptionMigration
 import dev.secureshare.security.AccountPrincipal
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.DisplayName
@@ -58,17 +59,17 @@ class FilePolicyTest {
     fun failedFinalization() {
         val catalog = mock(FileCatalog::class.java); val repository = mock(StoredFileRepository::class.java); val storage = mock(ObjectStorage::class.java)
         val owner = UUID.randomUUID(); val bytes = "file".toByteArray()
-        val record = StoredFile(UUID.randomUUID(), owner, FILE_NAME, 4, FilePolicy.sha256(bytes), "files/key", createdAt = Instant.EPOCH)
+        val record = StoredFile(UUID.randomUUID(), owner, FILE_NAME, 4, FilePolicy.sha256(bytes), "files/key", createdAt = Instant.EPOCH, storageFormat = StorageFormat.LEGACY_PLAIN)
         `when`(catalog.create(owner, FILE_NAME, bytes)).thenReturn(record)
         doThrow(DataAccessResourceFailureException("offline")).`when`(catalog).ready(record.id)
-        val service = FileService(catalog, repository, storage)
+        val service = FileService(catalog, repository, storage, Clock.systemUTC(), mock(EncryptionMigration::class.java))
         try {
             SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(AccountPrincipal(owner, "owner", "erased"), null, emptyList())
             val failure = assertThrows(FileUnavailableException::class.java) { service.upload(MockMultipartFile("file", FILE_NAME, "text/plain", bytes)) }
             assertInstanceOf(DataAccessResourceFailureException::class.java, failure.cause)
             assertEquals(dev.secureshare.observability.Stage.METADATA_READY, failure.stage)
             assertEquals(dev.secureshare.observability.Outcome.UNKNOWN, failure.outcome)
-            verify(storage).put(record.objectKey, bytes)
+            verify(storage).put(record, bytes)
             verify(catalog, never()).failed(record.id)
         } finally { SecurityContextHolder.clearContext() }
     }
@@ -78,11 +79,11 @@ class FilePolicyTest {
     fun failedUploadStateUpdate() {
         val catalog = mock(FileCatalog::class.java); val repository = mock(StoredFileRepository::class.java); val storage = mock(ObjectStorage::class.java)
         val owner = UUID.randomUUID(); val bytes = "file".toByteArray()
-        val record = StoredFile(UUID.randomUUID(), owner, FILE_NAME, 4, FilePolicy.sha256(bytes), "files/key", createdAt = Instant.EPOCH)
+        val record = StoredFile(UUID.randomUUID(), owner, FILE_NAME, 4, FilePolicy.sha256(bytes), "files/key", createdAt = Instant.EPOCH, storageFormat = StorageFormat.LEGACY_PLAIN)
         `when`(catalog.create(owner, FILE_NAME, bytes)).thenReturn(record)
         val unavailable = FileUnavailableException()
-        doThrow(unavailable).`when`(storage).put(record.objectKey, bytes)
-        val service = FileService(catalog, repository, storage)
+        doThrow(unavailable).`when`(storage).put(record, bytes)
+        val service = FileService(catalog, repository, storage, Clock.systemUTC(), mock(EncryptionMigration::class.java))
         try {
             SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(AccountPrincipal(owner, "owner", "erased"), null, emptyList())
             for (failure in listOf(DataAccessResourceFailureException("offline"), org.springframework.transaction.CannotCreateTransactionException("offline"))) {
@@ -110,7 +111,7 @@ class FilePolicyTest {
     @Test
     @DisplayName("Ошибки чтения multipart обрабатываются как недоступность, отсутствующая часть — как невалидный файл")
     fun multipartReadFailure() {
-        val service = FileService(mock(FileCatalog::class.java), mock(StoredFileRepository::class.java), mock(ObjectStorage::class.java))
+        val service = FileService(mock(FileCatalog::class.java), mock(StoredFileRepository::class.java), mock(ObjectStorage::class.java), Clock.systemUTC(), mock(EncryptionMigration::class.java))
         assertThrows(InvalidFileException::class.java) { service.upload(null) }
         val part = mock(org.springframework.web.multipart.MultipartFile::class.java)
         `when`(part.originalFilename).thenReturn(FILE_NAME); `when`(part.size).thenReturn(4)

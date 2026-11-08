@@ -14,7 +14,11 @@ class FileCatalog(private val files: StoredFileRepository, private val clock: Cl
     @Transactional
     fun create(ownerId: UUID, name: String, bytes: ByteArray): StoredFile {
         val id = UUID.randomUUID()
-        return files.saveAndFlush(StoredFile(id, ownerId, name, bytes.size.toLong(), FilePolicy.sha256(bytes), "files/$id", createdAt = Instant.now(clock)))
+        return files.saveAndFlush(StoredFile(
+            id, ownerId, name, bytes.size.toLong(), FilePolicy.sha256(bytes), encryptedObjectKey(id),
+            createdAt = Instant.now(clock), storageFormat = StorageFormat.AEAD_V1,
+            ciphertextSizeBytes = bytes.size.toLong() + FileEncryption.OVERHEAD,
+        ))
     }
 
     @Transactional

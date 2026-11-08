@@ -19,6 +19,7 @@ allOpen { annotation("jakarta.persistence.Entity") }
 dependencies {
     implementation(platform("software.amazon.awssdk:bom:2.57.9"))
     implementation("software.amazon.awssdk:s3")
+    implementation(libs.tink)
     implementation("software.amazon.awssdk:url-connection-client")
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-security")
@@ -71,4 +72,13 @@ tasks.bootJar {
 tasks.processTestResources {
     dependsOn(":frontendBuild")
     from(rootProject.file("frontend/dist")) { into("static") }
+}
+
+tasks.register<JavaExec>("generateFileKey") {
+    group = "application"
+    description = "Создаёт локальный ключ шифрования файлов"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass = "dev.secureshare.SecureShareApplicationKt"
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
+    args("generate-file-key", rootProject.file(".secrets/files.tink-keyset").absolutePath)
 }

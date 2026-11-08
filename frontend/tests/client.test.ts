@@ -81,3 +81,20 @@ it('получает список сеансов с cookies и отправля�
   expect(new Headers(init?.headers).get(token.headerName)).toBe(token.token);
   expect(init?.body).toBeUndefined();
 });
+
+it('проверяет файл с CSRF без тела и принимает только подтверждение с временем', async () => {
+  const signal = new AbortController().signal;
+  const verified = { status: 'VERIFIED', checkedAt: '2026-11-08T09:15:00Z' };
+  fetcher
+    .mockResolvedValueOnce(json(token))
+    .mockResolvedValueOnce(json(verified))
+    .mockResolvedValueOnce(json({ ...verified, checkedAt: 'invalid' }));
+
+  expect(await api.checkIntegrity('file/id', signal)).toEqual(verified);
+  const [path, init] = fetcher.mock.calls[1];
+  expect(path).toBe('/api/v1/files/file%2Fid/integrity-check');
+  expect(init).toMatchObject({ method: 'POST', credentials: 'include', signal });
+  expect(new Headers(init?.headers).get(token.headerName)).toBe(token.token);
+  expect(init?.body).toBeUndefined();
+  await expect(api.checkIntegrity('file/id', signal)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+});

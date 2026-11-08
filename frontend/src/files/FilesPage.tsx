@@ -6,6 +6,8 @@ import { Button } from '../ui/Button';
 import { Message } from '../ui/Feedback';
 import { UploadDialog } from './UploadDialog';
 import { useFiles } from './useFiles';
+import { useFileIntegrity } from './useFileIntegrity';
+import { useFileEncryption } from './useFileEncryption';
 import { formatBytes } from './format';
 import { useFileActions } from './useFileActions';
 import { FileList } from './FileList';
@@ -13,7 +15,16 @@ import { fileComparator } from './sort';
 
 export function FilesPage() {
   const { expire } = useAuth();
-  const { files, loading, error, setError, refresh, addFile } = useFiles(expire);
+  const { checks, check, reconcile, discard } = useFileIntegrity(expire);
+  const { files, loading, error, setError, refresh, addFile, replaceFile } = useFiles(expire, reconcile);
+  const { encryptions, encrypt } = useFileEncryption(
+    expire,
+    (file, updated) => {
+      if (file.storageStatus !== updated.storageStatus) discard(file.id);
+      replaceFile(updated);
+    },
+    () => refresh(false),
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('newest');
@@ -142,6 +153,10 @@ export function FilesPage() {
               files={visible}
               search={search}
               error={error}
+              checks={checks}
+              onCheck={check}
+              encryptions={encryptions}
+              onEncrypt={encrypt}
               downloading={downloading}
               onDownload={download}
               onUpload={() => setUploadOpen(true)}

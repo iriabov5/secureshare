@@ -188,7 +188,7 @@ paths:
       responses:
         '500': {$ref: '#/components/responses/InternalError'}
         '201':
-          description: Содержимое сохранено в S3, metadata подтверждены в PostgreSQL
+          description: Содержимое сохранено зашифрованным в S3, метаданные подтверждены в PostgreSQL
           headers:
             X-Request-ID: {$ref: '#/components/headers/RequestId'}
             Location:
@@ -228,7 +228,7 @@ paths:
         '503':
           headers:
             X-Request-ID: {$ref: '#/components/headers/RequestId'}
-          description: Ошибка S3 либо PostgreSQL; повторная загрузка создаёт новый файл
+          description: Ошибка шифрования, S3 или PostgreSQL. Повторная загрузка создаёт новый файл
           content:
             application/json:
               schema: {$ref: '#/components/schemas/FileError'}
@@ -245,7 +245,7 @@ paths:
       responses:
         '500': {$ref: '#/components/responses/InternalError'}
         '200':
-          description: Содержимое файла; Content-Disposition attachment, Cache-Control no-store
+          description: Исходные байты файла после проверки целостности. Content-Disposition attachment, Cache-Control no-store
           headers:
             X-Request-ID: {$ref: '#/components/headers/RequestId'}
             Content-Disposition:
@@ -283,6 +283,113 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/FileError'}
+  /api/v1/files/{id}/integrity-check:
+    post:
+      operationId: checkOwnFileIntegrity
+      summary: Проверить целостность собственного готового файла
+      security: [{sessionCookie: []}]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+        - {$ref: '#/components/parameters/CsrfHeader'}
+      responses:
+        '200':
+          description: Проверка хранимого объекта завершилась успешно
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+            Cache-Control:
+              schema: {type: string, enum: [no-store]}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileIntegrityResult'}
+        '400':
+          description: Недопустимый UUID
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '401':
+          description: Требуется действующий сеанс
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Unauthenticated'}
+        '403':
+          description: Ошибка CSRF или отказ в доступе к файлу
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '503':
+          description: Ошибка чтения, расшифровки или сверки целостности
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/files/{id}/encrypt:
+    post:
+      operationId: encryptOwnFile
+      summary: Зашифровать собственный готовый файл или завершить очистку старой копии
+      security: [{sessionCookie: []}]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+        - {$ref: '#/components/parameters/CsrfHeader'}
+      responses:
+        '200':
+          description: Активный объект зашифрован, удаление старой копии подтверждено
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+            Cache-Control:
+              schema: {type: string, enum: [no-store]}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileInfo'}
+        '400':
+          description: Недопустимый UUID
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '401':
+          description: Требуется действующий сеанс
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Unauthenticated'}
+        '403':
+          description: Ошибка CSRF или отказ в доступе к файлу
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '409':
+          description: Шифрование или очистка этого файла уже выполняется
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '503':
+          description: Сбой чтения, шифрования, переключения формата или очистки старой копии
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileError'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/me/sessions:
     get:
       operationId: listSessions
@@ -458,7 +565,7 @@ components:
     FileInfo:
       type: object
       additionalProperties: false
-      required: [id, name, sizeBytes, sha256, createdAt]
+      required: [id, name, sizeBytes, sha256, createdAt, storageStatus, legacyCleanupPending]
       properties:
         id: {type: string, format: uuid}
         name:
@@ -467,6 +574,17 @@ components:
         sizeBytes: {type: integer, format: int64, minimum: 1, maximum: 10485760}
         sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
         createdAt: {type: string, format: date-time}
+        storageStatus: {type: string, enum: [ENCRYPTED, PENDING_MIGRATION]}
+        legacyCleanupPending:
+          type: boolean
+          description: Активный объект зашифрован, удаление старой копии ещё не подтверждено
+    FileIntegrityResult:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt]
+      properties:
+        status: {type: string, enum: [VERIFIED]}
+        checkedAt: {type: string, format: date-time, description: Время завершения проверки в UTC}
     FileError:
       type: object
       additionalProperties: false
@@ -474,5 +592,5 @@ components:
       properties:
         code:
           type: string
-          enum: [INVALID_FILE, FILE_TOO_LARGE, FORBIDDEN, FILE_SERVICE_UNAVAILABLE]
+          enum: [INVALID_FILE, FILE_TOO_LARGE, FORBIDDEN, FILE_SERVICE_UNAVAILABLE, FILE_ENCRYPTION_IN_PROGRESS]
         message: {type: string}

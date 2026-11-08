@@ -42,7 +42,7 @@ class SecurityConfiguration {
                     .requestMatchers(HttpMethod.GET, "/", "/login", "/register", "/app", "/files", "/security", "/index.html", "/assets/**", "/favicon.svg", "/api/v1/auth/csrf").permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/logout").permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/v1/me", "/api/v1/me/sessions", "/api/v1/files", "/api/v1/files/*/content").authenticated()
-                    .requestMatchers(HttpMethod.POST, "/api/v1/files").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/files", "/api/v1/files/*/integrity-check", "/api/v1/files/*/encrypt").authenticated()
                     .requestMatchers(HttpMethod.DELETE, "/api/v1/me/sessions/*").authenticated()
                     .anyRequest().denyAll()
             }

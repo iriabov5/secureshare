@@ -18,6 +18,8 @@ const file: FileInfo = {
   sizeBytes: 1024,
   createdAt: '2026-11-05T12:00:00Z',
   sha256: '',
+  storageStatus: 'ENCRYPTED',
+  legacyCleanupPending: false,
 };
 beforeEach(() => vi.resetAllMocks());
 afterEach(() => {

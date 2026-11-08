@@ -218,7 +218,7 @@ class HttpSecurityTest {
     @Test
     @DisplayName("Flyway применён, PostgreSQL запрещает неверную роль и ненормализованный логин")
     fun databaseConstraints() {
-        assertEquals(2, jdbc.queryForObject("select count(*) from flyway_schema_history where success", Int::class.java))
+        assertEquals(3, jdbc.queryForObject("select count(*) from flyway_schema_history where success", Int::class.java))
         for ((username, role) in listOf("Alice" to "USER", name() to "ADMIN")) {
             assertThrows(org.springframework.dao.DataIntegrityViolationException::class.java) {
                 jdbc.update("insert into app_users values (?, ?, ?, ?, now())", UUID.randomUUID(), username, "test-hash", role)

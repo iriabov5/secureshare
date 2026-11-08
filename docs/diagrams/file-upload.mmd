@@ -1,8 +1,9 @@
 flowchart TD
-    A["Браузер: сессия + CSRF header"] --> B["FileService: PreAuthorize"]
-    B --> C["Проверка имени и размера"]
-    C --> D["PostgreSQL: UPLOADING"]
-    D --> E["S3 PUT: files/UUID"]
+    A["Браузер: сессия и CSRF"] --> B["Проверка имени и размера"]
+    B --> C["PostgreSQL: UPLOADING"]
+    C --> D["Tink: AES-256-GCM"]
+    D --> E["S3 PUT: зашифрованный объект"]
     E --> F["PostgreSQL: READY"]
     F --> G["201 JSON"]
-    E -->|отказ| H["FAILED по возможности; HTTP 503"]
+    D -->|отказ| H["FAILED по возможности, HTTP 503"]
+    E -->|отказ| H

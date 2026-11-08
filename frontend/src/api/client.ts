@@ -1,4 +1,4 @@
-import type { ActiveSessionList, Credentials, CsrfToken, FileInfo, User } from './types';
+import type { ActiveSessionList, Credentials, CsrfToken, FileInfo, FileIntegrityResult, User } from './types';
 
 export class HttpError extends Error {
   readonly status: number;
@@ -53,11 +53,14 @@ export function csrf(): Promise<CsrfToken> {
   return csrfPromise;
 }
 
-async function post<T>(path: string, body: BodyInit, contentType?: string): Promise<T> {
+async function post<T>(
+  path: string,
+  { body, contentType, signal }: { body?: BodyInit; contentType?: string; signal?: AbortSignal } = {},
+): Promise<T> {
   const token = await csrf();
   const headers = new Headers({ [token.headerName]: token.token });
   if (contentType) headers.set('Content-Type', contentType);
-  const response = await fetch(path, { method: 'POST', credentials: 'include', headers, body });
+  const response = await fetch(path, { method: 'POST', credentials: 'include', headers, body, signal });
   return jsonResponse<T>(response);
 }
 
@@ -90,19 +93,21 @@ export const api = {
     return jsonResponse<User>(await fetch('/api/v1/me', { credentials: 'include', signal }));
   },
   async register(credentials: Credentials): Promise<void> {
-    await post('/api/v1/auth/register', JSON.stringify(credentials), 'application/json');
+    await post('/api/v1/auth/register', {
+      body: JSON.stringify(credentials),
+      contentType: 'application/json',
+    });
   },
   async login(credentials: Credentials): Promise<User> {
-    const user = await post<User>(
-      '/api/v1/auth/login',
-      new URLSearchParams({ ...credentials }),
-      'application/x-www-form-urlencoded',
-    );
+    const user = await post<User>('/api/v1/auth/login', {
+      body: new URLSearchParams({ ...credentials }),
+      contentType: 'application/x-www-form-urlencoded',
+    });
     await refreshCsrf();
     return user;
   },
   async logout(): Promise<void> {
-    await post<void>('/api/v1/auth/logout', '');
+    await post<void>('/api/v1/auth/logout');
     await refreshCsrf();
   },
   async files(signal?: AbortSignal): Promise<FileInfo[]> {
@@ -111,7 +116,28 @@ export const api = {
   async upload(file: File): Promise<FileInfo> {
     const body = new FormData();
     body.append('file', file);
-    return post<FileInfo>('/api/v1/files', body);
+    return post<FileInfo>('/api/v1/files', { body });
+  },
+  async encryptFile(id: string, signal: AbortSignal): Promise<FileInfo> {
+    const file = await post<FileInfo>(`/api/v1/files/${encodeURIComponent(id)}/encrypt`, { signal });
+    if (file?.id !== id || file.storageStatus !== 'ENCRYPTED' || file.legacyCleanupPending !== false) {
+      throw new HttpError(502, 'INVALID_RESPONSE', 'Сервер вернул неожиданный ответ. Обновите страницу.');
+    }
+    return file;
+  },
+  async checkIntegrity(id: string, signal: AbortSignal): Promise<FileIntegrityResult> {
+    const result = await post<FileIntegrityResult>(
+      `/api/v1/files/${encodeURIComponent(id)}/integrity-check`,
+      { signal },
+    );
+    if (
+      result?.status !== 'VERIFIED' ||
+      typeof result.checkedAt !== 'string' ||
+      !Number.isFinite(Date.parse(result.checkedAt))
+    ) {
+      throw new HttpError(502, 'INVALID_RESPONSE', 'Сервер вернул неожиданный ответ. Обновите страницу.');
+    }
+    return result;
   },
   async download(id: string): Promise<Blob> {
     const response = await fetch(`/api/v1/files/${encodeURIComponent(id)}/content`, {

@@ -3,12 +3,20 @@ export interface User {
   username: string;
   roles: string[];
 }
+export type StorageStatus = 'ENCRYPTED' | 'PENDING_MIGRATION';
+
 export interface FileInfo {
   id: string;
   name: string;
   sizeBytes: number;
   sha256: string;
   createdAt: string;
+  storageStatus: StorageStatus;
+  legacyCleanupPending: boolean;
+}
+export interface FileIntegrityResult {
+  status: 'VERIFIED';
+  checkedAt: string;
 }
 export interface Credentials {
   username: string;
